@@ -72,6 +72,7 @@ jobs:
 
       - name: 7) Scene images (Wiro reve/generate)
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
         run: python scripts/generate_scenes.py --script script.md --out scenes/
 
