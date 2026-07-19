@@ -1,6 +1,6 @@
 """
 titles.json'daki 3 başlığın her biri için AYRI bir kapak (thumbnail)
-üretir (Wiro API, reve/generate) ve üzerine metin bindirir (PIL).
+üretir (Wiro API, openai/gpt-image-2) ve üzerine metin bindirir (PIL).
 Sonuç: 3 farklı kapak dosyası — YouTube Studio'nun native A/B Testing
 özelliğine elle yüklenmek üzere hazırlanır (bkz. generate_titles.py).
 
@@ -28,11 +28,14 @@ FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 
 def generate_background(prompt: str, out_path: str):
     full_prompt = f"{THUMBNAIL_STYLE}. Subject: {prompt}"
-    result = run_model("reve", "generate", {
+    task = run_model("openai", "gpt-image-2", {
         "prompt": full_prompt,
-        "aspect_ratio": "16:9",
+        "resolution": "1k",
+        "ratio": "16:9",
+        "quality": "medium",
+        "samples": 1,
     })
-    download_output(result, out_path)
+    download_output(task, out_path)
 
 
 def overlay_text(image_path: str, text: str, out_path: str):
@@ -78,5 +81,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
