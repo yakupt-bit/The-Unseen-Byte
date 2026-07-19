@@ -71,7 +71,13 @@ def poll_task(taskid: str, poll_interval: int = 3, max_wait: int = 300) -> dict:
         if status in terminal_statuses:
             pexit = task.get("pexit")
             if status == "task_cancel" or (pexit is not None and str(pexit) != "0"):
-                raise RuntimeError(f"Wiro görevi başarısız (status={status}, pexit={pexit})")
+                debug = task.get("debugoutput", "")
+                errors = data.get("errors", [])
+                raise RuntimeError(
+                    f"Wiro görevi başarısız (status={status}, pexit={pexit})\n"
+                    f"errors: {errors}\n"
+                    f"debugoutput: {debug[:2000] if debug else '(boş)'}"
+                )
             return task
 
         time.sleep(poll_interval)
