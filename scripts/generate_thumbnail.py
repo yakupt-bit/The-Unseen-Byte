@@ -28,14 +28,32 @@ FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 
 def generate_background(prompt: str, out_path: str):
     full_prompt = f"{THUMBNAIL_STYLE}. Subject: {prompt}"
-    task = run_model("openai", "gpt-image-2", {
-        "prompt": full_prompt,
-        "resolution": "1k",
-        "ratio": "16:9",
-        "quality": "medium",
-        "samples": 1,
-    })
-    download_output(task, out_path)
+    try:
+        task = run_model("openai", "gpt-image-2", {
+            "prompt": full_prompt,
+            "resolution": "1k",
+            "ratio": "16:9",
+            "quality": "medium",
+            "samples": 1,
+        })
+        download_output(task, out_path)
+    except RuntimeError as e:
+        if "safety system" in str(e).lower():
+            print("  UYARI: kapak için güvenlik reddi, jenerik tarifle yeniden deniyorum...")
+            fallback_prompt = (
+                f"{THUMBNAIL_STYLE}. Subject: an abstract, dramatic "
+                "technology-themed scene, glowing shapes, no people, no text"
+            )
+            task = run_model("openai", "gpt-image-2", {
+                "prompt": fallback_prompt,
+                "resolution": "1k",
+                "ratio": "16:9",
+                "quality": "medium",
+                "samples": 1,
+            })
+            download_output(task, out_path)
+        else:
+            raise
 
 
 def overlay_text(image_path: str, text: str, out_path: str):
