@@ -23,7 +23,7 @@ import re
 
 from wiro_client import run_model, download_output
 
-CHUNK_SIZE = 2500
+CHUNK_SIZE = 200
 
 
 def clean_script(raw: str) -> str:
