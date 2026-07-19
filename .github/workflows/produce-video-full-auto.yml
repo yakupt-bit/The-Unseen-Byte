@@ -1,0 +1,106 @@
+name: Produce Video (fully automated)
+
+# Uçtan uca otomatik: araştırma -> script (+kalite kontrolü) -> başlık
+# -> seslendirme -> altyazı -> sahne görselleri -> kapak -> render ->
+# müzik miksajı -> altyazı gömme.
+#
+# NOT: Script yazımı da otomatik. Bu, önceki (insan onaylı) sürüme göre
+# daha hızlı ama YouTube'un 2026 "özgün olmayan içerik" politikası
+# şablon/kitlesel üretime karşı daha sıkı. Kalite kontrol adımı
+# (generate_script.py içindeki eleştiri döngüsü) bir güvenlik ağı ama
+# garanti değil. İlk birkaç haftanın çıktısını mutlaka izle.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1,4"   # haftada 2 kez: Pazartesi ve Perşembe
+  workflow_dispatch:
+    inputs:
+      topic_hint:
+        description: "Konu ipucu (opsiyonel, boşsa otomatik seçer)"
+        required: false
+        default: ""
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (ffmpeg dahil)
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu libsndfile1
+          pip install -r requirements.txt
+
+      - name: 1) Trend analysis (what's actually working right now)
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: python scripts/trend_analysis.py --query "gaming psychology facts documentary" --out trend.json
+
+      - name: 2) Research
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TOPIC_HINT: ${{ github.event.inputs.topic_hint }}
+        run: python scripts/research.py --out facts.json
+
+      - name: 3) Generate + quality-check script
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md
+
+      - name: 4) Generate 3 title variants (for YouTube native A/B test)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/generate_titles.py --script script.md --out titles.json
+
+      - name: 5) Voiceover (Wiro voice-clone)
+        env:
+          WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
+        run: python scripts/tts.py --script script.md --out audio/voiceover.mp3
+
+      - name: 5b) Extract word timestamps (Whisper, provider-independent)
+        run: python scripts/align_subtitles.py --audio audio/voiceover.mp3 --out audio/alignment.json
+
+      - name: 6) Background music mix
+        run: |
+          python scripts/mix_audio.py --voice audio/voiceover.mp3 \
+            --music assets/music/background.mp3 --out audio/final_mix.mp3
+
+      - name: 7) Scene images (Wiro reve/generate)
+        env:
+          WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
+        run: python scripts/generate_scenes.py --script script.md --out scenes/
+
+      - name: 8) 3 thumbnail variants (Wiro reve/generate)
+        env:
+          WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
+        run: python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
+
+      - name: 9) Assemble video (no subtitles yet)
+        run: python scripts/assemble_video.py --audio audio/final_mix.mp3 --scenes scenes/ --out output/raw.mp4
+
+      - name: 10) Burn subtitles (synced from Whisper timestamps)
+        run: |
+          python scripts/subtitles.py --alignment audio/alignment.json \
+            --video output/raw.mp4 --out output/final.mp4
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-video-and-assets
+          path: |
+            output/final.mp4
+            output/thumbnails/
+            titles.json
+          retention-days: 14
+
+      # - name: Upload to YouTube as private draft
+      #   env:
+      #     YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      #     YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      #   run: |
+      #     python scripts/upload_youtube.py --file output/final.mp4 \
+      #       --thumbnail output/thumbnail.png --title-file title.txt --privacy private
