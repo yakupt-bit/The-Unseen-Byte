@@ -1,5 +1,5 @@
 """
-Script'i sahnelere ayırır, her sahne için Wiro API (reve/generate)
+Script'i sahnelere ayırır, her sahne için Wiro API (openai/gpt-image-2)
 ile görsel üretir ve scenes/ klasörüne numaralı olarak kaydeder.
 
 Basitleştirilmiş sahne bölme mantığı: her paragrafı bir sahne kabul
@@ -27,11 +27,14 @@ def split_into_scenes(script_text: str):
 
 def generate_image(prompt: str, out_path: str):
     full_prompt = f"{STYLE_GUIDE}. Scene: {prompt}"
-    result = run_model("reve", "generate", {
+    task = run_model("openai", "gpt-image-2", {
         "prompt": full_prompt,
-        "aspect_ratio": "16:9",
+        "resolution": "1k",
+        "ratio": "16:9",
+        "quality": "medium",
+        "samples": 1,
     })
-    download_output(result, out_path)
+    download_output(task, out_path)
 
 
 def main():
@@ -55,4 +58,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
