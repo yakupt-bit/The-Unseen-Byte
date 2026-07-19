@@ -65,10 +65,10 @@ jobs:
       - name: 5b) Extract word timestamps (Whisper, provider-independent)
         run: python scripts/align_subtitles.py --audio audio/voiceover.mp3 --out audio/alignment.json
 
-      - name: 6) Background music mix
+      - name: 6) Background music mix (random track from pool)
         run: |
           python scripts/mix_audio.py --voice audio/voiceover.mp3 \
-            --music assets/music/background.mp3 --out audio/final_mix.mp3
+            --music-dir assets/music/ --out audio/final_mix.mp3
 
       - name: 7) Scene images (Wiro reve/generate)
         env:
