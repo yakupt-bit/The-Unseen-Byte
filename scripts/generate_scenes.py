@@ -1,16 +1,22 @@
 """
-Script'i sahnelere ayırır, her sahne için Wiro API (openai/gpt-image-2)
-ile görsel üretir ve scenes/ klasörüne numaralı olarak kaydeder.
+Script'i sahnelere ayırır. Her sahne için ÖNCE Claude ile ham anlatım
+metnini güvenli, tamamen görsel bir sahne tarifine çevirir (isim/marka/
+gerçek kişi gibi güvenlik reddi tetikleyebilecek unsurları temizler),
+SONRA o tarifi Wiro API (openai/gpt-image-2) ile görsele çevirir.
 
-Basitleştirilmiş sahne bölme mantığı: her paragrafı bir sahne kabul
-eder. Gerçek kullanımda kendi sahne-bölme kuralına göre uyarlaman
-gerekir (örn. cümle sayısına veya saniyeye göre).
+Neden bu ekstra adım gerekli: ham anlatım metnini olduğu gibi görsel
+isteğine göndermek hem OpenAI'nin güvenlik sistemine takılma riskini
+artırıyor hem de kötü görsel sonuçlar veriyor (anlatım cümlesi görsel
+tarif değildir). Bir sahne yine de reddedilirse, jenerik güvenli bir
+tarifle YENİDEN dener — tüm pipeline'ın çökmesini önler.
 
 Kullanım:
     python scripts/generate_scenes.py --script script.md --out scenes/
 """
 import argparse
 import os
+
+import anthropic
 
 from wiro_client import run_model, download_output
 
@@ -19,10 +25,41 @@ STYLE_GUIDE = (
     "consistent character design across scenes, 16:9"
 )
 
+MODEL = "claude-sonnet-4-6"
+
 
 def split_into_scenes(script_text: str):
     paragraphs = [p.strip() for p in script_text.split("\n\n") if p.strip()]
     return paragraphs
+
+
+def to_safe_visual_prompt(client, narration_paragraph: str) -> str:
+    """Ham anlatım cümlesini güvenli, soyut, tamamen görsel bir sahne
+    tarifine çevirir. Gerçek isim/marka/kişi/olay YOK, sadece görsel
+    unsurlar (kompozisyon, nesneler, atmosfer) olsun."""
+    prompt = f"""Aşağıdaki YouTube anlatım cümlesini, bir görsel üretim
+AI'sine gönderilecek KISA (1-2 cümle) bir SAHNE TARİFİNE çevir.
+
+Kurallar:
+- Gerçek kişi, marka, oyun adı, şirket adı KULLANMA — bunun yerine
+  soyut/temsili görseller tarif et (örn. "a game developer" değil
+  "a person coding at a desk with monitors").
+- Sadece GÖRSEL unsurları anlat: kompozisyon, nesneler, ortam, ışık.
+  Anlatının kendisini veya iddiaları tekrar etme.
+  Şiddet, silah, kan içeren hiçbir şey yazma.
+- İngilizce yaz.
+
+ANLATIM CÜMLESİ:
+{narration_paragraph}
+
+SADECE sahne tarifini yaz, başka bir şey ekleme."""
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=150,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return "".join(b.text for b in response.content if b.type == "text").strip()
 
 
 def generate_image(prompt: str, out_path: str):
@@ -37,6 +74,19 @@ def generate_image(prompt: str, out_path: str):
     download_output(task, out_path)
 
 
+def generate_image_with_fallback(client, narration_paragraph: str, out_path: str):
+    safe_prompt = to_safe_visual_prompt(client, narration_paragraph)
+    try:
+        generate_image(safe_prompt, out_path)
+    except RuntimeError as e:
+        if "safety system" in str(e).lower():
+            print(f"  UYARI: güvenlik reddi, jenerik tarifle yeniden deniyorum...")
+            fallback_prompt = "an abstract, atmospheric technology-themed background, soft glowing shapes, no people, no text"
+            generate_image(fallback_prompt, out_path)
+        else:
+            raise
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", required=True)
@@ -48,11 +98,12 @@ def main():
     with open(args.script, "r", encoding="utf-8") as f:
         script_text = f.read()
 
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     scenes = split_into_scenes(script_text)
 
     for i, scene_text in enumerate(scenes, start=1):
         out_path = os.path.join(args.out, f"scene_{i:03d}.png")
-        generate_image(scene_text, out_path)
+        generate_image_with_fallback(client, scene_text, out_path)
         print(f"Sahne {i}/{len(scenes)} oluşturuldu -> {out_path}")
 
 
