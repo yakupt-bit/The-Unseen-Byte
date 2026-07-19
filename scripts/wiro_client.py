@@ -4,15 +4,16 @@ görsel üretimi, kapak üretimi ve seslendirme için bunu kullanıyoruz —
 tek API anahtarı, tek fatura.
 
 Auth: "API Key Only" (basit) yöntemi kullanılıyor — sadece x-api-key
-header'ı yeterli. Daha güvenli imza-bazlı (HMAC) yöntem de var ama
-sunucu tarafı (GitHub Actions) kullanımında API-key-only pratikte
-yeterli ve daha basit.
+header'ı yeterli.
 
-Not: Her Wiro modelinin kendi parametre isimleri var (örn. "prompt",
-"text", "reference_audio" gibi farklılık gösterebilir). Yeni bir model
-kullanmadan önce https://wiro.ai/docs adresinden veya panelden
-POST /Tool/Detail ile o modelin tam parametre şemasına bakıp
-MODEL isimlerini/parametrelerini bu dosyada doğrula.
+GERÇEK API DAVRANIŞI (JSON şemadan doğrulandı, ilk versiyonumdaki
+"wait" parametresi YANLIŞTI, API'de öyle bir şey yok):
+  1. POST /Run/{owner}/{model} -> SADECE görev oluşturur, hemen
+     {"result": true/false, "taskid": "...", "errors": [...]} döner.
+     Bu "result" bir BAŞARI BAYRAĞI (bool), çıktı nesnesi değil.
+  2. Gerçek çıktıyı almak için POST /Task/Detail ile taskid'i
+     durumu "task_postprocess_end" olana kadar POLL etmek gerekiyor.
+  3. Bitince tasklist[0]["outputs"] içinde dosya URL'leri olur.
 """
 import os
 import time
@@ -29,65 +30,61 @@ def _headers():
     }
 
 
-def run_model(owner: str, model: str, params: dict, wait: bool = True, timeout: int = 180) -> dict:
-    """
-    owner/model örn: "reve", "generate" -> POST /v1/Run/reve/generate
-    wait=True ise Wiro sonucu kendi tarafında bekleyip döndürür (basit
-    kullanım için önerilir). Uzun süren video işlerinde wait=False
-    kullanıp poll_task ile takip etmek daha güvenli olabilir.
-    """
-    payload = dict(params)
-    payload["wait"] = wait
-
+def run_model(owner: str, model: str, params: dict, poll_interval: int = 3, max_wait: int = 300) -> dict:
     resp = requests.post(
         f"{BASE_URL}/Run/{owner}/{model}",
         headers=_headers(),
-        json=payload,
-        timeout=timeout,
+        json=params,
+        timeout=60,
     )
     resp.raise_for_status()
     data = resp.json()
 
-    if not wait:
-        return data  # taskid/tasktoken içerir, poll_task ile takip et
+    if not data.get("result") or data.get("errors"):
+        raise RuntimeError(f"Wiro görev oluşturma başarısız: {data.get('errors')}")
 
-    return _extract_result(data)
+    taskid = data["taskid"]
+    return poll_task(taskid, poll_interval=poll_interval, max_wait=max_wait)
 
 
-def poll_task(tasktoken: str, poll_interval: int = 3, max_wait: int = 300) -> dict:
+def poll_task(taskid: str, poll_interval: int = 3, max_wait: int = 300) -> dict:
+    terminal_statuses = {"task_postprocess_end", "task_cancel"}
     elapsed = 0
+
     while elapsed < max_wait:
         resp = requests.post(
             f"{BASE_URL}/Task/Detail",
             headers=_headers(),
-            json={"tasktoken": tasktoken},
+            json={"taskid": taskid},
             timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
-        if data.get("result", {}).get("pexit") is not None:
-            return _extract_result(data)
+
+        tasklist = data.get("tasklist", [])
+        if not tasklist:
+            raise RuntimeError(f"Task {taskid} bulunamadı: {data}")
+
+        task = tasklist[0]
+        status = task.get("status")
+
+        if status in terminal_statuses:
+            pexit = task.get("pexit")
+            if status == "task_cancel" or (pexit is not None and str(pexit) != "0"):
+                raise RuntimeError(f"Wiro görevi başarısız (status={status}, pexit={pexit})")
+            return task
+
         time.sleep(poll_interval)
         elapsed += poll_interval
 
-    raise TimeoutError(f"Task {tasktoken} {max_wait} saniyede tamamlanmadı")
+    raise TimeoutError(f"Task {taskid} {max_wait} saniyede tamamlanmadı")
 
 
-def _extract_result(data: dict) -> dict:
-    result = data.get("result", data)
-    pexit = result.get("pexit")
-    if pexit is not None and str(pexit) != "0":
-        raise RuntimeError(f"Wiro görevi başarısız (pexit={pexit}): {result.get('errors')}")
-    return result
-
-
-def download_output(result: dict, out_path: str, index: int = 0):
-    """result['outputs'] içindeki CDN URL'sini indirir. Wiro CDN
-    çıktıları belirli bir süre sonra silinebilir, hemen indirmek önemli."""
-    outputs = result.get("outputs", [])
+def download_output(task: dict, out_path: str, index: int = 0):
+    outputs = task.get("outputs", [])
     if not outputs:
         raise ValueError("Bu görevde indirilecek çıktı yok")
-    url = outputs[index] if isinstance(outputs[index], str) else outputs[index].get("url")
+    url = outputs[index]["url"] if isinstance(outputs[index], dict) else outputs[index]
 
     r = requests.get(url, timeout=120)
     r.raise_for_status()
