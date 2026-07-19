@@ -59,6 +59,7 @@ jobs:
       - name: 5) Voiceover (Wiro voice-clone)
         env:
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
+          VOICE_REFERENCE_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/assets/voice/reference.wav
         run: python scripts/tts.py --script script.md --out audio/voiceover.mp3
 
       - name: 5b) Extract word timestamps (Whisper, provider-independent)
