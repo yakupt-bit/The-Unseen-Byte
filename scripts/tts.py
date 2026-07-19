@@ -1,14 +1,18 @@
 """
 Script metnini klonlanmış sesle seslendirir — Wiro API (wiro/voice-clone,
 Coqui tabanlı). Sesini klonlamak için 6 saniyelik bir ses örneği
-gerekiyor (assets/voice/reference.wav olarak koy).
+gerekiyor; bu örnek assets/voice/reference.wav olarak repoda duruyor
+ve Wiro'ya PUBLIC RAW GITHUB URL'İ olarak veriliyor (base64 değil).
 
-ÖNEMLİ FARK: ElevenLabs'in aksine Wiro'nun bu modeli kelime bazlı
-zaman damgası (timestamp) döndürmüyor. Bu yüzden altyazı senkronu için
-ayrı bir adım gerekiyor: align_subtitles.py, üretilen sesi Whisper ile
-yeniden dinleyip kelime zamanlarını çıkarıyor. Bu, hangi TTS
-sağlayıcısını kullanırsan kullan çalışan, sağlayıcıdan bağımsız bir
-çözüm — bkz. align_subtitles.py.
+Gerçek parametre şeması (Wiro JSON Schema'dan doğrulandı):
+  - prompt        -> seslendirilecek metin (ZORUNLU)
+  - inputAudioUrl -> referans ses dosyasının erişilebilir URL'i
+  - language      -> dil kodu ("en", "tr", vb.)
+
+ÖNEMLİ FARK: ElevenLabs'in aksine bu model kelime bazlı zaman damgası
+(timestamp) döndürmüyor. Bu yüzden altyazı senkronu için ayrı bir adım
+var: align_subtitles.py, üretilen sesi Whisper ile yeniden dinleyip
+kelime zamanlarını çıkarıyor.
 
 Kullanım:
     python scripts/tts.py --script script.md --out audio/voiceover.mp3
@@ -19,7 +23,6 @@ import re
 
 from wiro_client import run_model, download_output
 
-VOICE_REFERENCE_PATH = "assets/voice/reference.wav"
 CHUNK_SIZE = 2500
 
 
@@ -42,12 +45,11 @@ def chunk_text(text: str, size: int):
 
 
 def synthesize_chunk(text: str, out_path: str):
-    # NOT: "reference_audio" parametre adı tahmini — kullanmadan önce
-    # Wiro panelinde wiro/voice-clone modelinin POST /Tool/Detail
-    # şemasına bakıp doğrula, model güncellemesiyle değişmiş olabilir.
+    voice_reference_url = os.environ["VOICE_REFERENCE_URL"]
     result = run_model("wiro", "voice-clone", {
-        "text": text,
-        "reference_audio": VOICE_REFERENCE_PATH,
+        "prompt": text,
+        "inputAudioUrl": voice_reference_url,
+        "language": "en",
     })
     download_output(result, out_path)
 
@@ -71,7 +73,6 @@ def main():
         synthesize_chunk(chunk, chunk_path)
         chunk_paths.append(chunk_path)
 
-    # parçaları tek dosyada birleştir (ffmpeg concat)
     import subprocess
     concat_list = "audio_concat_list.txt"
     with open(concat_list, "w") as f:
