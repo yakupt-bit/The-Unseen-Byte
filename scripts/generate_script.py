@@ -89,4 +89,37 @@ SCRIPT:
 
 
 def revise_script(client, niche, script, feedback):
-    prompt = f"""Aşağıdaki script'i şu geri
+    prompt = f"""Aşağıdaki script'i şu geri bildirime göre düzelt:
+
+GERİ BİLDİRİM: {feedback}
+
+NİŞ: {niche}
+
+MEVCUT SCRIPT:
+{script}
+
+Düzeltilmiş TAM script'i yaz, sadece metni ver, yorum ekleme.
+ÖNEMLİ: Script %100 İngilizce olmalı, Türkçe kelime kullanma."""
+    return call_claude(client, prompt)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--facts", required=True)
+    parser.add_argument("--trends", required=False, default=None,
+                         help="trend_analysis.py çıktısı (opsiyonel)")
+    parser.add_argument("--test", action="store_true",
+                         help="Hızlı test modu: çok kısa script üretir (~150 kelime)")
+    parser.add_argument("--out", required=True)
+    args = parser.parse_args()
+
+    niche = load_text("prompts/niche.md")
+    facts_json = load_text(args.facts)
+    trend_summary = load_trend_summary(args.trends)
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    script = write_script(client, niche, facts_json, trend_summary, test_mode=args.test)
+
+    for revision in range(MAX_REVISIONS):
+        review = critique_script(client,
