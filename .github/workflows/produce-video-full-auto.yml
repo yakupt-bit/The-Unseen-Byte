@@ -19,6 +19,11 @@ on:
         description: "Konu ipucu (opsiyonel, boşsa otomatik seçer)"
         required: false
         default: ""
+      test_mode:
+        description: "Hızlı test modu (çok kısa ~1 dk video, hızlı iterasyon için)"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   produce:
