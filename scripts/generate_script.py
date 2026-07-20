@@ -8,13 +8,9 @@ Akış:
   3. Puan 7'nin altındaysa, eleştiriyi kullanarak script yeniden yazılır
      (en fazla 2 tur, sonsuz döngüye girmesin)
 
-Bu adım, script yazımını insana bırakmadan da bir kalite tabanı
-oluşturmayı hedefler. Yine de ilk birkaç hafta çıktıları elle
-kontrol etmeni öneririm — otomasyon iyi çalıştığını kanıtladıkça
-kontrolü azalt.
-
 Kullanım:
     python scripts/generate_script.py --facts facts.json --out script.md
+    python scripts/generate_script.py --facts facts.json --out script.md --test
 """
 import argparse
 import json
@@ -55,10 +51,17 @@ def call_claude(client, prompt, max_tokens=3000):
     return "".join(b.text for b in response.content if b.type == "text")
 
 
-def write_script(client, niche, facts_json, trend_summary=""):
+def write_script(client, niche, facts_json, trend_summary="", test_mode=False):
     template = load_text("prompts/script_prompt.md")
     prompt = template.replace("{NICHE}", niche).replace("{FACTS}", facts_json)
     prompt += trend_summary
+    if test_mode:
+        prompt += (
+            "\n\nTEST MODU: Bu bir pipeline testi, gerçek yayın değil. "
+            "Script'i SADECE 120-180 kelime uzunluğunda yaz (yaklaşık "
+            "45-60 saniyelik video), 3-4 kısa paragraf halinde. Hook ve "
+            "ton kuralları hâlâ geçerli, sadece çok daha kısa olsun."
+        )
     return call_claude(client, prompt)
 
 
@@ -82,51 +85,8 @@ SCRIPT:
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        return {"score": 10, "feedback": ""}  # parse edilemezse geçir
+        return {"score": 10, "feedback": ""}
 
 
 def revise_script(client, niche, script, feedback):
-    prompt = f"""Aşağıdaki script'i şu geri bildirime göre düzelt:
-
-GERİ BİLDİRİM: {feedback}
-
-NİŞ: {niche}
-
-MEVCUT SCRIPT:
-{script}
-
-Düzeltilmiş TAM script'i yaz, sadece metni ver, yorum ekleme."""
-    return call_claude(client, prompt)
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--facts", required=True)
-    parser.add_argument("--trends", required=False, default=None,
-                         help="trend_analysis.py çıktısı (opsiyonel)")
-    parser.add_argument("--out", required=True)
-    args = parser.parse_args()
-
-    niche = load_text("prompts/niche.md")
-    facts_json = load_text(args.facts)
-    trend_summary = load_trend_summary(args.trends)
-
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
-    script = write_script(client, niche, facts_json, trend_summary)
-
-    for revision in range(MAX_REVISIONS):
-        review = critique_script(client, niche, script)
-        print(f"Revizyon {revision}: puan={review['score']}")
-        if review["score"] >= QUALITY_THRESHOLD:
-            break
-        script = revise_script(client, niche, script, review["feedback"])
-
-    with open(args.out, "w", encoding="utf-8") as f:
-        f.write(script)
-
-    print(f"Script hazır -> {args.out}")
-
-
-if __name__ == "__main__":
-    main()
+    prompt = f"""Aşağıdaki script'i şu geri
