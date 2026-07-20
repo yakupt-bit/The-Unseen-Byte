@@ -122,4 +122,17 @@ def main():
     script = write_script(client, niche, facts_json, trend_summary, test_mode=args.test)
 
     for revision in range(MAX_REVISIONS):
-        review = critique_script(client,
+        review = critique_script(client, niche, script)
+        print(f"Revizyon {revision}: puan={review['score']}")
+        if review["score"] >= QUALITY_THRESHOLD:
+            break
+        script = revise_script(client, niche, script, review["feedback"])
+
+    with open(args.out, "w", encoding="utf-8") as f:
+        f.write(script)
+
+    print(f"Script hazır -> {args.out}")
+
+
+if __name__ == "__main__":
+    main()
