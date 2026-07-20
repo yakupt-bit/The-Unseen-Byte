@@ -54,8 +54,9 @@ jobs:
       - name: 3) Generate + quality-check script
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md
-
+          TEST_FLAG: ${{ github.event.inputs.test_mode == 'true' && '--test' || '' }}
+        run: python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
+        
       - name: 4) Generate 3 title variants (for YouTube native A/B test)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
