@@ -58,21 +58,52 @@ def generate_background(prompt: str, out_path: str):
 
 def overlay_text(image_path: str, text: str, out_path: str):
     img = Image.open(image_path).convert("RGB")
-    draw = ImageDraw.Draw(img)
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    max_text_width = int(img.width * 0.92)   # kenarlardan pay bırak
+    max_text_height = int(img.height * 0.38)  # alt bölgenin en fazla bu kadarını kaplasın
+    x_margin = int(img.width * 0.04)
+    bottom_margin = int(img.height * 0.05)
 
     words = text.split()
-    short_text = " ".join(words[:5]).upper()
-    wrapped = textwrap.fill(short_text, width=14)
+    short_text = " ".join(words[:6]).upper()  # tam başlık değil, vurucu kısa versiyon
 
-    font_size = int(img.height * 0.12)
-    font = ImageFont.truetype(FONT_PATH, font_size)
+    # Font boyutunu, metin kutuya sığana kadar KÜÇÜLTEREK bul
+    font_size = int(img.height * 0.14)
+    min_font_size = int(img.height * 0.05)
 
-    x, y = int(img.width * 0.05), int(img.height * 0.65)
-    for dx in (-4, -2, 0, 2, 4):
-        for dy in (-4, -2, 0, 2, 4):
+    while font_size > min_font_size:
+        font = ImageFont.truetype(FONT_PATH, font_size)
+        avg_char_w = font.getbbox("A")[2] - font.getbbox("A")[0]
+        wrap_width = max(6, max_text_width // max(avg_char_w, 1))
+        wrapped = textwrap.fill(short_text, width=wrap_width)
+
+        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        if text_w <= max_text_width and text_h <= max_text_height:
+            break
+        font_size -= 4
+    else:
+        font = ImageFont.truetype(FONT_PATH, min_font_size)
+        wrapped = textwrap.fill(short_text, width=14)
+        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
+        text_h = bbox[3] - bbox[1]
+
+    x = x_margin
+    y = img.height - bottom_margin - text_h
+    pad = 16
+    draw.rectangle(
+        [x - pad, y - pad, x + (bbox[2] - bbox[0]) + pad, y + text_h + pad],
+        fill=(0, 0, 0, 140),
+    )
+
+    for dx in (-3, -1, 0, 1, 3):
+        for dy in (-3, -1, 0, 1, 3):
             draw.multiline_text((x + dx, y + dy), wrapped, font=font,
-                                 fill="black", spacing=10)
-    draw.multiline_text((x, y), wrapped, font=font, fill="white", spacing=10)
+                                 fill=(0, 0, 0, 255), spacing=10)
+    draw.multiline_text((x, y), wrapped, font=font, fill=(255, 255, 255, 255), spacing=10)
 
     img.save(out_path)
 
