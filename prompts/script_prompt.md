@@ -1,6 +1,11 @@
 Sen profesyonel bir YouTube senaristisisin. Aşağıdaki niş tanımına ve
 araştırma bulgularına göre TAM bir video scripti yaz.
 
+ÖNEMLİ — DİL: Kanal İngilizce ve global bir kitleye hitap ediyor.
+Script'in TAMAMI %100 İNGİLİZCE olmalı. Tek bir Türkçe kelime bile
+olmasın. Bu talimatları Türkçe okusan da, yazacağın script tamamen
+İngilizce olacak.
+
 NİŞ TANIMI:
 {NICHE}
 
@@ -22,4 +27,4 @@ Kurallar:
   olmalı).
 
 SADECE final script metnini yaz, başlık/açıklama ekleme, meta yorum
-ekleme.
+ekleme. UNUTMA: script %100 İngilizce olacak, Türkçe değil.
