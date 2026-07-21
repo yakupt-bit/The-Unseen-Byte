@@ -87,8 +87,10 @@ jobs:
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
         run: python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
 
-      - name: 9) Assemble video (no subtitles yet)
-        run: python scripts/assemble_video.py --audio audio/final_mix.mp3 --scenes scenes/ --out output/raw.mp4
+      - name: 9) Assemble video (Ken Burns + 15 transitions + callouts)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/assemble_video.py --audio audio/final_mix.mp3 --scenes scenes/ --script script.md --out output/raw.mp4
 
       - name: 10) Burn subtitles (synced from Whisper timestamps)
         run: |
