@@ -21,10 +21,12 @@ Kurallar:
   "meraklı arkadaş" da değil, daha profesyonel ve otoriter bir sunuş.
 - Her iddia için araştırmadaki kaynağı doğal bir cümle içinde belirt
   ("İsviçre'deki bir araştırmaya göre..." gibi, dipnot gibi değil).
-- Video EN AZ 10, ideal olarak 10-14 dakika uzunluğunda okunacak kadar
-  DOLU DOLU olsun (~1500-2100 kelime). Yüzeysel geçme, her alt konuyu
+- Video EN AZ 10, ideal olarak 10-24 dakika uzunluğunda okunacak kadar
+  DOLU DOLU olsun (~1500-3600 kelime). Yüzeysel geçme, her alt konuyu
   gerçekten açıkla, örnekle, detaylandır - kelime doldurma değil,
-  gerçek içerik derinliği ile bu uzunluğa ulaş.
+  gerçek içerik derinliği ile bu uzunluğa ulaş. Ne kadar uzun olursa
+  o kadar iyi, YETER Kİ her cümle gerçekten değer katsın, boş
+  tekrar/doldurma olmasın.
 - Script'i doğal bölümlere ayır (giriş/hook, 3-5 ana bölüm, kapanış) -
   her bölüm kendi içinde tam bir düşünceyi bitirsin.
 - Sonunda SAMİMİ VE İKNA EDİCİ ama agresif olmayan bir kapanış/abone
