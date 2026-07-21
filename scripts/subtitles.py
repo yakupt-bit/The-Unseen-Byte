@@ -24,8 +24,6 @@ def format_srt_time(seconds: float) -> str:
 
 
 def chars_to_words(alignment):
-    # Zaten kelime bazlıysa (align_subtitles.py / Whisper çıktısı)
-    # direkt kullan, dönüştürme yapma.
     if alignment and "word" in alignment[0]:
         return alignment
 
@@ -45,13 +43,23 @@ def chars_to_words(alignment):
     return words
 
 
+def is_valid_word(word: str) -> bool:
+    """Whisper bazen bozuk/glitch'li seste anlamsız semboller (orn.
+    tek başına '%', '...', rastgele noktalama) 'duyabiliyor'. Bunları
+    altyazıya yansıtmadan ayıklıyoruz - en az bir harf/rakam içermeli."""
+    stripped = word.strip()
+    if not stripped:
+        return False
+    return any(ch.isalnum() for ch in stripped)
+
+
 def build_srt(words, out_path):
+    words = [w for w in words if is_valid_word(w["word"])]
     with open(out_path, "w", encoding="utf-8") as f:
         idx = 1
         for i in range(0, len(words), WORDS_PER_CAPTION):
             group = words[i:i + WORDS_PER_CAPTION]
             start = group[0]["start"]
-            # bitiş zamanı: bir sonraki grubun başlangıcı, yoksa +2sn
             if i + WORDS_PER_CAPTION < len(words):
                 end = words[i + WORDS_PER_CAPTION]["start"]
             else:
@@ -62,7 +70,6 @@ def build_srt(words, out_path):
 
 
 def burn_subtitles(video_path, srt_path, out_path):
-    # force_style: okunabilir, kalın, gölgeli altyazı stili
     style = "FontName=Arial,FontSize=22,Bold=1,OutlineColour=&H80000000,BorderStyle=3"
     subprocess.run(
         [
