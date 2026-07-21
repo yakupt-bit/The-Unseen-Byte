@@ -21,6 +21,7 @@ import anthropic
 MODEL = "claude-sonnet-4-6"
 MAX_REVISIONS = 2
 QUALITY_THRESHOLD = 7
+SCRIPT_MAX_TOKENS = 8000
 
 
 def load_text(path):
@@ -35,7 +36,7 @@ def load_trend_summary(trend_path):
         trends = json.load(f)
     top5 = trends[:5]
     lines = ["\n\nGÜNCEL TREND REFERANSI (bu nişte şu an gerçekten izlenen "
-             "videoların başlıkları — birebir kopyalama, ama neyin işe "
+             "videoların başlıkları - birebir kopyalama, ama neyin işe "
              "yaradığını anlamak için kullan):"]
     for t in top5:
         lines.append(f"- \"{t['title']}\" ({t['views']:,} izlenme)")
@@ -62,7 +63,8 @@ def write_script(client, niche, facts_json, trend_summary="", test_mode=False):
             "45-60 saniyelik video), 3-4 kısa paragraf halinde. Hook ve "
             "ton kuralları hâlâ geçerli, sadece çok daha kısa olsun."
         )
-    return call_claude(client, prompt)
+        return call_claude(client, prompt, max_tokens=1000)
+    return call_claude(client, prompt, max_tokens=SCRIPT_MAX_TOKENS)
 
 
 def critique_script(client, niche, script):
@@ -100,7 +102,7 @@ MEVCUT SCRIPT:
 
 Düzeltilmiş TAM script'i yaz, sadece metni ver, yorum ekleme.
 ÖNEMLİ: Script %100 İngilizce olmalı, Türkçe kelime kullanma."""
-    return call_claude(client, prompt)
+    return call_claude(client, prompt, max_tokens=SCRIPT_MAX_TOKENS)
 
 
 def main():
