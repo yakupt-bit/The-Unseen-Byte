@@ -15,13 +15,18 @@ ARAŞTIRMA BULGULARI (JSON):
 Kurallar:
 - İlk 15 saniye (hook) izleyiciyi anında yakalamalı: bir soru, şaşırtıcı
   bir iddia veya çelişki ile aç. Asla "Merhaba bugün X hakkında
-  konuşacağız" gibi başlama.
+  konuşacağız" gibi başlama. Doğrudan izleyiciye hitap et
+  ("Imagine if...", "What you're about to hear..."), retorik sorular
+  sor, gerilim kur (bilgiyi hemen verme, önce merak uyandır sonra açıkla).
 - Ton: alanında OTORİTER, güvenilir bir uzman/belgesel sunucusu gibi -
   net, kendinden emin, ciddiye alınası. Kurumsal/robotik değil ama
   "meraklı arkadaş" da değil, daha profesyonel ve otoriter bir sunuş.
+- Bölüm geçişlerinde de gerilim/merak tekniği kullan: bir sonraki
+  bölüme geçmeden önce kısa bir "ama asıl şaşırtıcı olan şu..." tarzı
+  köprü cümlesiyle izleyiciyi devam etmeye teşvik et.
 - Her iddia için araştırmadaki kaynağı doğal bir cümle içinde belirt
   ("İsviçre'deki bir araştırmaya göre..." gibi, dipnot gibi değil).
-- Video EN AZ 10, ideal olarak 10-24 dakika uzunluğunda okunacak kadar
+- Video EN AZ 10, ideal olarak 10-40 dakika uzunluğunda okunacak kadar
   DOLU DOLU olsun (~1500-3600 kelime). Yüzeysel geçme, her alt konuyu
   gerçekten açıkla, örnekle, detaylandır - kelime doldurma değil,
   gerçek içerik derinliği ile bu uzunluğa ulaş. Ne kadar uzun olursa
@@ -32,8 +37,7 @@ Kurallar:
 - Sonunda SAMİMİ VE İKNA EDİCİ ama agresif olmayan bir kapanış/abone
   çağrısı olsun. "Abone ol beğen yorum yap" spamı DEĞİL - izleyicinin
   gerçekten değer bulduğu bir video izlediğini hissettiren, doğal,
-  kişisel bir kapanış cümlesi kur (örn. neden bu kanalı takip etmeye
-  değer olduğuna dair tek, samimi bir cümle).
+  kişisel bir kapanış cümlesi kur.
 - Hiçbir güncel olaya, tarihe veya turnuvaya referans verme (evergreen
   olmalı).
 
