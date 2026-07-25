@@ -107,10 +107,11 @@ jobs:
             titles.json
           retention-days: 14
 
-      # - name: Upload to YouTube as private draft
-      #   env:
-      #     YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-      #     YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-      #   run: |
-      #     python scripts/upload_youtube.py --file output/final.mp4 \
-      #       --thumbnail output/thumbnail.png --title-file title.txt --privacy private
+      - name: 11) Upload to YouTube (private, manual review before publish)
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python scripts/upload_youtube.py --video output/final.mp4 \
+            --titles titles.json --thumbnail output/thumbnails/thumbnail_1.png
