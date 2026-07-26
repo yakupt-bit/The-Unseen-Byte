@@ -21,7 +21,7 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 
-DEFAULT_CATEGORY_ID = "28"  # Science & Technology - Studio'dan değiştirilebilir
+DEFAULT_CATEGORY_ID = "28"
 DESCRIPTION_TEMPLATE = (
     "{title}\n\n"
     "The Unseen Byte digs into the science, psychology, and hidden "
