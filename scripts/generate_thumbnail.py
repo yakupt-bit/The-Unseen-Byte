@@ -4,9 +4,6 @@ titles.json'daki 3 başlığın her biri için AYRI bir kapak (thumbnail)
 Sonuç: 3 farklı kapak dosyası - YouTube Studio'nun native A/B Testing
 özelliğine elle yüklenmek üzere hazırlanır (bkz. generate_titles.py).
 
-Kırmızı daire/ok vurgusu KODLA (PIL) garantili şekilde ekleniyor -
-görsel üretim modelinin bunu otomatik eklemesini garanti edemeyiz.
-
 Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
 """
@@ -148,7 +145,7 @@ def overlay_text(image_path: str, text: str, out_path: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--titles", required=True)
+    parser.add_argument("--titles", required=True, help="generate_titles.py çıktısı (3 başlık)")
     parser.add_argument("--out-dir", required=True)
     args = parser.parse_args()
 
