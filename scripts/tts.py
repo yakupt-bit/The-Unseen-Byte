@@ -24,6 +24,9 @@ CHUNK_SIZE = 200
 
 def clean_script(raw: str) -> str:
     text = re.sub(r"```.*?```", "", raw, flags=re.S)
+    text = text.replace("&", " and ")
+    text = text.replace("%", " percent")
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
@@ -50,21 +53,7 @@ def synthesize_chunk(text: str, out_path: str):
     download_output(result, out_path)
 
 
-def get_duration(path: str) -> float:
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True, check=True,
-    )
-    return float(result.stdout.strip())
-
-
 def normalize_audio(in_path: str, out_path: str):
-    """Her parçayı AYNI codec/sample-rate/kanal sayısına getirir ve
-    başına/sonuna kısa bir fade uygular. Fade olmadan parçalar art
-    arda eklenince ani kesme/tık sesi oluşuyor, bu da hem kulağa
-    "boğuk/tıkanık" geliyor hem de Whisper'ı yanıltıp saçma altyazı
-    (örn. anlamsız sembol/yüzde işaretleri) üretmesine sebep oluyor."""
     raw_duration = get_duration(in_path)
     fade_out_start = max(raw_duration - 0.08, 0)
 
@@ -76,6 +65,15 @@ def normalize_audio(in_path: str, out_path: str):
         check=True,
         capture_output=True,
     )
+
+
+def get_duration(path: str) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", path],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
 
 
 def main():
@@ -124,15 +122,17 @@ def main():
 
     subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+         "-af", "atempo=1.10,aecho=0.8:0.88:50:0.25",
          "-c:a", "libmp3lame", "-q:a", "2", args.out],
         check=True,
     )
 
     final_duration = get_duration(args.out)
+    expected_after_speedup = total_expected_duration / 1.10
     print(f"Seslendirme tamamlandı -> {args.out}")
-    print(f"Beklenen toplam süre: {total_expected_duration:.1f}s, "
+    print(f"Beklenen toplam süre (1.10x hız sonrası): {expected_after_speedup:.1f}s, "
           f"gerçek dosya süresi: {final_duration:.1f}s")
-    if abs(final_duration - total_expected_duration) > 2:
+    if abs(final_duration - expected_after_speedup) > 3:
         print("UYARI: süre uyuşmuyor, birleştirmede sorun olabilir!")
 
     print("Not: zaman damgası yok, bir sonraki adımda align_subtitles.py çalıştır.")
