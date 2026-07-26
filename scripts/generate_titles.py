@@ -5,10 +5,6 @@ titles.json'a kaydeder. Bu 3 başlık, YouTube Studio'nun native
 hazırlanır - kazananı biz değil, YouTube'un gerçek izleyici verisi
 seçer (izlenme süresi payına göre).
 
-Başlık kalıpları, global çapta kanıtlanmış gizem/belgesel tarzı
-kanallardan çıkarılan örüntülere dayanıyor: soru formatı, "onlara ne
-oldu" gizem çerçevesi, güçlü iddia + merak açığı, sayı/liste formatı.
-
 Kullanım:
     python scripts/generate_titles.py --script script.md --out titles.json
 """
@@ -18,13 +14,14 @@ import os
 
 import anthropic
 
-MODEL = "claude-sonnet-4-6"
+MODEL_CREATIVE = "claude-sonnet-4-6"
+MODEL_UTILITY = "claude-haiku-4-5-20251001"
 NUM_VARIANTS = 3
 
 
-def call_claude(client, prompt, max_tokens=800):
+def call_claude(client, prompt, model, max_tokens=800):
     response = client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -65,7 +62,7 @@ SCRIPT:
 
 Çıktı SADECE JSON dizi, İngilizce başlıklarla: ["title1", "title2", ...]"""
 
-    raw_candidates = call_claude(client, gen_prompt)
+    raw_candidates = call_claude(client, gen_prompt, MODEL_CREATIVE)
     cleaned = raw_candidates.replace("```json", "").replace("```", "").strip()
     candidates = json.loads(cleaned)
 
@@ -79,7 +76,7 @@ ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 Çıktı SADECE JSON (başlıklar İngilizce kalacak, gerekçeler Türkçe
 olabilir): {{"selected": ["title1", "title2", "title3"], "reasons": ["gerekçe1", "gerekçe2", "gerekçe3"]}}"""
 
-    raw_rank = call_claude(client, rank_prompt, max_tokens=500)
+    raw_rank = call_claude(client, rank_prompt, MODEL_UTILITY, max_tokens=500)
     cleaned_rank = raw_rank.replace("```json", "").replace("```", "").strip()
     result = json.loads(cleaned_rank)
 
