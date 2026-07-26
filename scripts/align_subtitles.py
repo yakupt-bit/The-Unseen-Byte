@@ -27,7 +27,11 @@ def main():
     words = []
     for segment in segments:
         for word in segment.words:
-            words.append({"word": word.word.strip(), "start": word.start})
+            words.append({
+                "word": word.word.strip(),
+                "start": word.start,
+                "prob": round(word.probability, 3),
+            })
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(words, f, ensure_ascii=False, indent=2)
