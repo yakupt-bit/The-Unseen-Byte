@@ -4,21 +4,39 @@ YouTube Data API ile nişe yakın, son dönemde yüksek izlenen videoları
 Bu dosya sonra generate_script.py ve generate_titles.py tarafından
 "şu an gerçekten işe yarayan formatlar" referansı olarak kullanılır.
 
+--query verilmezse, aşağıdaki QUERY_POOL'dan RASTGELE biri seçilir -
+böylece art arda yakın zamanlı çalıştırmalarda hep aynı (dolayısıyla
+hep aynı sonuçları veren) sorgu tekrarlanmaz, her seferinde nişin
+farklı bir açısından trend verisi çekilir.
+
 Not: YouTube Data API günlük kota sınırlıdır (varsayılan 10.000 birim/gün,
-search.list çağrısı 100 birim tutar) — bu scripti günde birkaç kez
+search.list çağrısı 100 birim tutar) - bu scripti günde birkaç kez
 çağırman kotayı hızla tüketebilir, haftalık çalıştırman yeterli.
 
 Kullanım:
+    python scripts/trend_analysis.py --out trend.json
     python scripts/trend_analysis.py --query "gaming psychology facts" --out trend.json
 """
 import argparse
 import datetime
 import os
+import random
 
 import requests
 
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+
+QUERY_POOL = [
+    "gaming psychology facts documentary",
+    "video game history mystery",
+    "tech facts you didn't know",
+    "hidden history technology",
+    "gaming industry secrets explained",
+    "science of video games",
+    "retro gaming untold story",
+    "why games are addictive science",
+]
 
 
 def search_recent_popular(query: str, api_key: str, days_back: int = 60, max_results: int = 15):
@@ -64,13 +82,17 @@ def fetch_stats(video_ids, api_key):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--query", required=True, help="Niş ile ilgili arama terimi")
+    parser.add_argument("--query", required=False, default="",
+                         help="Niş ile ilgili arama terimi (boşsa havuzdan rastgele seçilir)")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
+    query = args.query.strip() if args.query else random.choice(QUERY_POOL)
+    print(f"Kullanılan sorgu: \"{query}\"")
+
     api_key = os.environ["YOUTUBE_API_KEY"]
 
-    video_ids = search_recent_popular(args.query, api_key)
+    video_ids = search_recent_popular(query, api_key)
     trend_data = fetch_stats(video_ids, api_key)
 
     import json
@@ -79,7 +101,7 @@ def main():
 
     print(f"Trend analizi tamamlandı -> {args.out} ({len(trend_data)} video)")
     for v in trend_data[:5]:
-        print(f"  {v['views']:>10,} izlenme — {v['title']}")
+        print(f"  {v['views']:>10,} izlenme - {v['title']}")
 
 
 if __name__ == "__main__":
