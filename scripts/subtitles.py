@@ -1,18 +1,18 @@
 """
-tts.py'nin ürettiği karakter-bazlı zaman damgalarından (gerçek, tahmini
-DEĞİL) kelime gruplarına göre SRT altyazı üretir ve ffmpeg ile videoya
-gömer. Karakterlerin gerçek başlama zamanını kullandığımız için altyazı
-sesle birebir örtüşür, kayma olmaz.
+align_subtitles.py'nin ürettiği kelime bazlı gerçek zaman damgalarından
+SRT altyazı üretir ve ffmpeg ile videoya gömer.
 
 Kullanım:
-    python scripts/subtitles.py --alignment audio/voiceover_alignment.json \
-        --video output/silent_with_audio.mp4 --out output/final_subtitled.mp4
+    python scripts/subtitles.py --alignment audio/alignment.json \
+        --video output/raw.mp4 --out output/final.mp4
 """
 import argparse
 import json
+import re
 import subprocess
 
-WORDS_PER_CAPTION = 6  # ekranda aynı anda gösterilecek kelime sayısı
+WORDS_PER_CAPTION = 6
+MIN_CONFIDENCE = 0.4
 
 
 def format_srt_time(seconds: float) -> str:
@@ -43,27 +43,49 @@ def chars_to_words(alignment):
     return words
 
 
-def is_valid_word(word: str) -> bool:
-    """Whisper bazen bozuk/glitch'li seste anlamsız semboller (orn.
-    tek başına '%', '...', rastgele noktalama) 'duyabiliyor'. Bunları
-    altyazıya yansıtmadan ayıklıyoruz - en az bir harf/rakam içermeli."""
-    stripped = word.strip()
+def merge_trailing_punctuation(words):
+    merged = []
+    for w in words:
+        text = w["word"].strip()
+        if merged and text and all(not ch.isalnum() for ch in text):
+            merged[-1] = dict(merged[-1])
+            merged[-1]["word"] = merged[-1]["word"] + text
+        else:
+            merged.append(w)
+    return merged
+
+
+def is_valid_word(word_entry: dict) -> bool:
+    stripped = word_entry["word"].strip()
     if not stripped:
         return False
-    return any(ch.isalnum() for ch in stripped)
+    if not any(ch.isalnum() for ch in stripped):
+        return False
+    prob = word_entry.get("prob")
+    if prob is not None and prob < MIN_CONFIDENCE:
+        return False
+    return True
 
 
 def build_srt(words, out_path):
-    words = [w for w in words if is_valid_word(w["word"])]
+    words = merge_trailing_punctuation(words)
+    words = [w for w in words if is_valid_word(w)]
+    sentence_end_re = re.compile(r'[.!?]"?$')
+
     with open(out_path, "w", encoding="utf-8") as f:
         idx = 1
-        for i in range(0, len(words), WORDS_PER_CAPTION):
-            group = words[i:i + WORDS_PER_CAPTION]
+        i = 0
+        n = len(words)
+        while i < n:
+            group = []
+            while len(group) < WORDS_PER_CAPTION and i < n:
+                group.append(words[i])
+                i += 1
+                if sentence_end_re.search(group[-1]["word"]):
+                    break
+
             start = group[0]["start"]
-            if i + WORDS_PER_CAPTION < len(words):
-                end = words[i + WORDS_PER_CAPTION]["start"]
-            else:
-                end = start + 2.0
+            end = words[i]["start"] if i < n else start + 2.0
             text = " ".join(w["word"] for w in group)
             f.write(f"{idx}\n{format_srt_time(start)} --> {format_srt_time(end)}\n{text}\n\n")
             idx += 1
