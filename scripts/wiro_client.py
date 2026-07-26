@@ -1,9 +1,9 @@
 """
 Wiro AI için ortak, tek dosyalık istemci. Gemini/ElevenLabs yerine
-görsel üretimi, kapak üretimi ve seslendirme için bunu kullanıyoruz —
+görsel üretimi, kapak üretimi ve seslendirme için bunu kullanıyoruz -
 tek API anahtarı, tek fatura.
 
-Auth: "API Key Only" (basit) yöntemi kullanılıyor — sadece x-api-key
+Auth: "API Key Only" (basit) yöntemi kullanılıyor - sadece x-api-key
 header'ı yeterli.
 
 GERÇEK API DAVRANIŞI (JSON şemadan doğrulandı, ilk versiyonumdaki
