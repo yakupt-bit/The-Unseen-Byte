@@ -101,7 +101,8 @@ def overlay_text(image_path: str, text: str, out_path: str):
     x_margin = int(img.width * 0.04)
     bottom_margin = int(img.height * 0.05)
 
-    words = text.split()
+    core_text = text.split("|")[0].strip()
+    words = core_text.split()
     short_text = " ".join(words[:6]).upper()
 
     font_size = int(img.height * 0.14)
