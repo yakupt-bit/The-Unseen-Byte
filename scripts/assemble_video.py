@@ -1,15 +1,18 @@
 """
-scenes/ klasöründeki görselleri, sesin süresine göre Ken Burns
-efektiyle (yavaş yakınlaşma + rastgele yön pan) animasyonlu klipler
-haline getirir, aralarına 15 farklı geçiş efektinden (art arda AYNISI
-tekrarlanmayacak şekilde) birini koyarak birleştirir.
+scenes/ klasöründeki görselleri, sesin süresine göre SÜREKLİ hareket
+eden animasyon klipleri haline getirir (zoom-in/zoom-out + sağ/sol/
+yukarı/aşağı pan kombinasyonları - klip boyunca ASLA sabit kalmaz,
+tüm süreye yayılacak şekilde hesaplanıyor), aralarına 15 farklı geçiş
+efektinden (art arda AYNISI tekrarlanmayacak şekilde) birini koyarak
+birleştirir. Hem animasyon stili hem geçiş efekti art arda gelen
+klipler arasında TEKRARLANMAZ.
 
 Ekstra bindirmeler:
 - VURGU KARTI (sağ üst): çarpıcı bir sayı/istatistik geçtiğinde kısa
   süreliğine görünür.
 - BİLGİ KARTI (sol üst): bir kısaltma/kurum adı (ESRB, NASA gibi)
   geçtiğinde ne olduğunu kısaca açıklayan küçük bir kart.
-- KÖŞE LOGOSU (sol alt, köşeye yakın ama tam dipte değil): video
+- KÖŞE LOGOSU (sol ÜST, köşeye yakın ama tam köşede değil): video
   boyunca kalıcı, hafif saydam kanal logosu.
 
 Kullanım:
@@ -38,6 +41,11 @@ TRANSITIONS = [
     "slideleft", "slideright", "slideup", "slidedown",
     "circleopen", "circleclose", "smoothleft", "smoothright",
     "diagbl", "diagtr",
+]
+
+ANIMATION_STYLES = [
+    "zoom_in_left", "zoom_in_right", "zoom_in_up", "zoom_in_down",
+    "zoom_out_left", "zoom_out_right", "zoom_out_up", "zoom_out_down",
 ]
 
 
@@ -76,7 +84,7 @@ PARAGRAFLAR:
 [{{"callout": "27%", "info_card": ""}}, {{"callout": "", "info_card": "ESRB: video game content rating organization"}}, ...]"""
 
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",  # basit çıkarım işi, Sonnet gerekmiyor
+        model="claude-haiku-4-5-20251001",
         max_tokens=800,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -91,33 +99,43 @@ PARAGRAFLAR:
     return overlays[:len(scenes)]
 
 
-def make_ken_burns_clip(image_path: str, duration: float, callout_text: str,
-                         info_card_text: str, out_path: str):
-    frames = int(duration * FPS)
+def build_zoompan_expr(style: str, frames: int):
+    pan_amount = 60
+    zoom_in_target = 1.35
+    zoom_out_start = 1.35
 
-    pan_style = random.choice(["left", "right", "up", "down", "none"])
-    pan_amount = 45
-    if pan_style == "left":
+    direction = style.split("_", 2)[2]
+    is_zoom_in = style.startswith("zoom_in")
+
+    if is_zoom_in:
+        z_expr = f"1+({zoom_in_target}-1)*on/{frames}"
+    else:
+        z_expr = f"{zoom_out_start}-({zoom_out_start}-1)*on/{frames}"
+
+    if direction == "left":
         x_expr = f"iw/2-(iw/zoom/2)-({pan_amount}*on/{frames})"
         y_expr = "ih/2-(ih/zoom/2)"
-    elif pan_style == "right":
+    elif direction == "right":
         x_expr = f"iw/2-(iw/zoom/2)+({pan_amount}*on/{frames})"
         y_expr = "ih/2-(ih/zoom/2)"
-    elif pan_style == "up":
+    elif direction == "up":
         x_expr = "iw/2-(iw/zoom/2)"
         y_expr = f"ih/2-(ih/zoom/2)-({pan_amount}*on/{frames})"
-    elif pan_style == "down":
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = f"ih/2-(ih/zoom/2)+({pan_amount}*on/{frames})"
     else:
         x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
+        y_expr = f"ih/2-(ih/zoom/2)+({pan_amount}*on/{frames})"
 
-    zoom_expr = "min(zoom+0.0012,1.4)"
+    return z_expr, x_expr, y_expr
+
+
+def make_ken_burns_clip(image_path: str, duration: float, callout_text: str,
+                         info_card_text: str, style: str, out_path: str):
+    frames = int(duration * FPS)
+    z_expr, x_expr, y_expr = build_zoompan_expr(style, frames)
 
     vf_chain = (
         f"scale=1920:-1,"
-        f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':"
+        f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
         f"d={frames}:s={RESOLUTION}:fps={FPS}"
     )
 
@@ -218,7 +236,7 @@ def add_logo_and_audio(silent_video: str, audio_path: str, out_path: str):
                 "-i", audio_path,
                 "-filter_complex",
                 "[1:v]scale=110:-1,format=rgba,colorchannelmixer=aa=0.8[logo];"
-                "[0:v][logo]overlay=x=30:y=H-h-90:shortest=1[vout]",
+                "[0:v][logo]overlay=x=30:y=30:shortest=1[vout]",
                 "-map", "[vout]", "-map", "2:a",
                 "-c:v", "libx264", "-c:a", "aac",
                 "-shortest",
@@ -271,19 +289,24 @@ def main():
     print(f"{n} sahne, her biri ~{clip_len:.1f}sn (geçişlerle toplam ~{total_duration:.1f}sn)")
 
     clip_paths = []
+    last_style = None
     for i, scene_file in enumerate(scene_files):
         clip_path = f"clip_{i:03d}.mp4"
         callout = overlays[i]["callout"] if i < len(overlays) else ""
         info_card = overlays[i]["info_card"] if i < len(overlays) else ""
-        make_ken_burns_clip(scene_file, clip_len, callout, info_card, clip_path)
+
+        style_choices = [s for s in ANIMATION_STYLES if s != last_style]
+        style = random.choice(style_choices)
+        last_style = style
+
+        make_ken_burns_clip(scene_file, clip_len, callout, info_card, style, clip_path)
         clip_paths.append(clip_path)
-        tags = []
+        tags = [f"animasyon:{style}"]
         if callout:
             tags.append(f"vurgu:'{callout}'")
         if info_card:
             tags.append(f"bilgi:'{info_card}'")
-        tag_str = f" ({', '.join(tags)})" if tags else ""
-        print(f"  Klip {i+1}/{n} hazır{tag_str}")
+        print(f"  Klip {i+1}/{n} hazır ({', '.join(tags)})")
 
     silent_video = "silent_video.mp4"
     chain_with_xfade(clip_paths, clip_len, silent_video)
