@@ -7,6 +7,9 @@ Akış:
      kullanımı, evergreen kuralına uyum, doğallık) ve 1-10 puan verir
   3. Puan 7'nin altındaysa, eleştiriyi kullanarak script yeniden yazılır
      (en fazla 2 tur, sonsuz döngüye girmesin)
+  4. Son olarak, script.md'ye yazmadan önce her türlü markdown başlığı/
+     zaman damgası temizlenir (bunlar TTS ile SESLİ okunacağı için
+     script.md'nin ilk andan itibaren tertemiz olması şart)
 
 Kullanım:
     python scripts/generate_script.py --facts facts.json --out script.md
@@ -15,6 +18,7 @@ Kullanım:
 import argparse
 import json
 import os
+import re
 
 import anthropic
 
@@ -22,6 +26,28 @@ MODEL = "claude-sonnet-4-6"
 MAX_REVISIONS = 2
 QUALITY_THRESHOLD = 7
 SCRIPT_MAX_TOKENS = 8000
+
+
+def strip_meta_formatting(text: str) -> str:
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+        if stripped.startswith("#"):
+            continue
+        if re.match(r"^(Section|Chapter|Part)\s*\d*\s*:?\s*$", stripped, re.I):
+            continue
+        if re.match(r"^\[?\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]?$", stripped):
+            continue
+        stripped = re.sub(r"\[?\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]?", "", stripped)
+        stripped = re.sub(r"^#+\s*", "", stripped)
+        cleaned_lines.append(stripped)
+    text = "\n".join(cleaned_lines)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def load_text(path):
@@ -75,6 +101,9 @@ def critique_script(client, niche, script):
 2. Ton doğal mı, yoksa robotik/kurumsal mı?
 3. Kaynaklar doğal cümleler içinde mi, yoksa dipnot gibi mi duruyor?
 4. Evergreen kuralına uyuyor mu (güncel olay referansı var mı)?
+5. Script'te markdown başlığı (#), bölüm etiketi veya zaman damgası
+   ([0:45-4:00] gibi) VAR MI? Varsa mutlaka feedback'te belirt, bunlar
+   asla olmamalı.
 
 NİŞ: {niche}
 
@@ -103,7 +132,8 @@ MEVCUT SCRIPT:
 {script}
 
 Düzeltilmiş TAM script'i yaz, sadece metni ver, yorum ekleme.
-ÖNEMLİ: Script %100 İngilizce olmalı, Türkçe kelime kullanma."""
+ÖNEMLİ: Script %100 İngilizce olmalı, Türkçe kelime kullanma.
+ÖNEMLİ: Markdown başlığı (#), bölüm etiketi, zaman damgası OLMASIN."""
     return call_claude(client, prompt, max_tokens=SCRIPT_MAX_TOKENS)
 
 
@@ -131,6 +161,8 @@ def main():
         if review["score"] >= QUALITY_THRESHOLD:
             break
         script = revise_script(client, niche, script, review["feedback"])
+
+    script = strip_meta_formatting(script)
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(script)
