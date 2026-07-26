@@ -24,9 +24,29 @@ CHUNK_SIZE = 200
 
 def clean_script(raw: str) -> str:
     text = re.sub(r"```.*?```", "", raw, flags=re.S)
+
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+        if stripped.startswith("#"):
+            continue
+        if re.match(r"^(Section|Chapter|Part)\s*\d*\s*:?\s*$", stripped, re.I):
+            continue
+        if re.match(r"^\[?\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]?$", stripped):
+            continue
+        stripped = re.sub(r"\[?\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]?", "", stripped)
+        stripped = re.sub(r"^#+\s*", "", stripped)
+        cleaned_lines.append(stripped)
+    text = "\n".join(cleaned_lines)
+
     text = text.replace("&", " and ")
     text = text.replace("%", " percent")
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
