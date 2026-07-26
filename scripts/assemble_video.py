@@ -76,7 +76,7 @@ PARAGRAFLAR:
 [{{"callout": "27%", "info_card": ""}}, {{"callout": "", "info_card": "ESRB: video game content rating organization"}}, ...]"""
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",  # basit çıkarım işi, Sonnet gerekmiyor
         max_tokens=800,
         messages=[{"role": "user", "content": prompt}],
     )
