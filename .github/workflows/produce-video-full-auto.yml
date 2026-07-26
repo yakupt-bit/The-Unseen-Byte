@@ -5,13 +5,12 @@ name: Produce Video (fully automated)
 # müzik miksajı -> altyazı gömme.
 #
 # Zamanlama SADECE cron-job.org üzerinden yönetiliyor (Pazartesi/
-# Çarşamba/Cuma, 18:00 Türkiye saati). GitHub'ın kendi dahili
-# "schedule" tetikleyicisi BİLEREK yok - ikisi birden aktifken
-# Pazartesi günü video 2 kez üretiliyordu.
+# Çarşamba/Cuma, 12:00 Türkiye saati - pipeline'a tampon süre vermek
+# için). GitHub'ın kendi dahili "schedule" tetikleyicisi BİLEREK yok.
+# Video ise upload_youtube.py sayesinde YouTube'un kendi zamanlı
+# yayın özelliğiyle tam 17:00 TR'de otomatik yayına giriyor.
 
 on:
-permissions:
-  contents: write   # used_topics.json'ı repoya geri commit edebilmek için
   workflow_dispatch:
     inputs:
       topic_hint:
@@ -23,6 +22,9 @@ permissions:
         required: false
         type: boolean
         default: false
+
+permissions:
+  contents: write   # used_topics.json'ı repoya geri commit edebilmek için
 
 jobs:
   produce:
@@ -95,13 +97,7 @@ jobs:
         run: |
           python scripts/subtitles.py --alignment audio/alignment.json \
             --video output/raw.mp4 --out output/final.mp4
-      - name: 12) Save topic history (prevent future repeats)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add used_topics.json
-          git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history"
-          git push
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -112,7 +108,7 @@ jobs:
             titles.json
           retention-days: 14
 
-      - name: 11) Upload to YouTube (public, direct publish)
+      - name: 11) Upload to YouTube (scheduled publish at target hour)
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
@@ -120,3 +116,11 @@ jobs:
         run: |
           python scripts/upload_youtube.py --video output/final.mp4 \
             --titles titles.json --thumbnail output/thumbnails/thumbnail_1.png
+
+      - name: 12) Save topic history (prevent future repeats)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add used_topics.json
+          git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history"
+          git push
