@@ -4,15 +4,12 @@ name: Produce Video (fully automated)
 # -> seslendirme -> altyazı -> sahne görselleri -> kapak -> render ->
 # müzik miksajı -> altyazı gömme.
 #
-# NOT: Script yazımı da otomatik. Bu, önceki (insan onaylı) sürüme göre
-# daha hızlı ama YouTube'un 2026 "özgün olmayan içerik" politikası
-# şablon/kitlesel üretime karşı daha sıkı. Kalite kontrol adımı
-# (generate_script.py içindeki eleştiri döngüsü) bir güvenlik ağı ama
-# garanti değil. İlk birkaç haftanın çıktısını mutlaka izle.
+# Zamanlama SADECE cron-job.org üzerinden yönetiliyor (Pazartesi/
+# Çarşamba/Cuma, 18:00 Türkiye saati). GitHub'ın kendi dahili
+# "schedule" tetikleyicisi BİLEREK yok - ikisi birden aktifken
+# Pazartesi günü video 2 kez üretiliyordu.
 
 on:
-  schedule:
-    - cron: "0 9 * * 1,4"   # haftada 2 kez: Pazartesi ve Perşembe
   workflow_dispatch:
     inputs:
       topic_hint:
@@ -23,7 +20,7 @@ on:
         description: "Hızlı test modu (çok kısa ~1 dk video, hızlı iterasyon için)"
         required: false
         type: boolean
-        default: true
+        default: false
 
 jobs:
   produce:
@@ -56,7 +53,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FLAG: ${{ github.event.inputs.test_mode == 'true' && '--test' || '' }}
         run: python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
-        
+
       - name: 4) Generate 3 title variants (for YouTube native A/B test)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -107,7 +104,7 @@ jobs:
             titles.json
           retention-days: 14
 
-      - name: 11) Upload to YouTube (private, manual review before publish)
+      - name: 11) Upload to YouTube (public, direct publish)
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
