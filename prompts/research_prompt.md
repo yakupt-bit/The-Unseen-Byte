@@ -25,3 +25,8 @@ Kaçınmanı istediklerim:
     {"claim": "...", "source": "...", "surprise_factor": "high/medium"}
   ]
 }
+
+ÖNEMLİ: "topic" alanı SADECE kategori adı olmasın (örn. "Gaming
+Psychology" YETERSİZ), bu videonun SPESİFİK hikayesini/açısını kısaca
+özetleyen bir cümle olsun (örn. "ESRB rating system relies on publisher-submitted footage, not actual gameplay"). Bu alan, gelecekte
+aynı konunun tekrar seçilmemesi için kullanılıyor.
