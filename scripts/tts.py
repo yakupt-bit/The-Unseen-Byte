@@ -122,7 +122,7 @@ def main():
 
     subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
-         "-af", "atempo=1.10,aecho=0.8:0.88:50:0.25",
+         "-af", "atempo=1.10",
          "-c:a", "libmp3lame", "-q:a", "2", args.out],
         check=True,
     )
