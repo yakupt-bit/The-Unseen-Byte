@@ -3,9 +3,8 @@ Arka plan müziğini seslendirmenin altına, konuşmayı bastırmayacak
 şekilde (düşük ses seviyesi + sidechain ducking) miksler.
 
 assets/music/ klasörüne BİRDEN FAZLA telifsiz/lisanslı parça koy
-(örn. background_1.mp3, background_2.mp3, ...) — her video üretiminde
-bu havuzdan rastgele biri seçilir. Tek bir parça kullanmak, düzenli
-izleyicilerin aynı müziği fark edip sıkılmasına yol açabilir.
+(örn. background_1.mp3, background_2.mp3, ...) - her video üretiminde
+bu havuzdan rastgele biri seçilir.
 
 Kullanım:
     python scripts/mix_audio.py --voice audio/voiceover.mp3 \
@@ -21,7 +20,7 @@ def pick_random_track(music_dir: str) -> str:
     tracks = glob.glob(f"{music_dir.rstrip('/')}/*.mp3")
     if not tracks:
         raise FileNotFoundError(
-            f"{music_dir} içinde .mp3 dosyası bulunamadı — en az bir "
+            f"{music_dir} içinde .mp3 dosyası bulunamadı - en az bir "
             "arka plan müziği ekle (örn. assets/music/background_1.mp3)"
         )
     chosen = random.choice(tracks)
