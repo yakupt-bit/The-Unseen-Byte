@@ -61,7 +61,9 @@ def write_script(client, niche, facts_json, trend_summary="", test_mode=False):
             "\n\nTEST MODU: Bu bir pipeline testi, gerçek yayın değil. "
             "Script'i SADECE 120-180 kelime uzunluğunda yaz (yaklaşık "
             "45-60 saniyelik video), 3-4 kısa paragraf halinde. Hook ve "
-            "ton kuralları hâlâ geçerli, sadece çok daha kısa olsun."
+            "ton kuralları hâlâ geçerli, sadece çok daha kısa olsun. "
+            "Yine de sonunda kısa, samimi bir kapanış/abone çağrısı "
+            "cümlesi olsun (1 cümle yeterli)."
         )
         return call_claude(client, prompt, max_tokens=1000)
     return call_claude(client, prompt, max_tokens=SCRIPT_MAX_TOKENS)
