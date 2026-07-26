@@ -1,11 +1,18 @@
 """
-Üretilen videoyu YouTube'a OAuth ile yükler. Güvenlik için varsayılan
-olarak "private" (gizli) yükler - otomasyon hiçbir zaman doğrudan
-herkese açık yayınlamaz, sen Studio'dan kontrol edip yayınlarsın.
+Üretilen videoyu YouTube'a OAuth ile yükler.
+
+Video DOĞRUDAN "public" (herkese açık) olarak yayınlanır - manuel
+inceleme adımı kaldırıldı (bilinçli tercih: pipeline artık test
+edildi, otomasyon "kur ve unut" şeklinde çalışıyor).
 
 AI-üretilen içerik olduğu için "containsSyntheticMedia" bayrağı
 otomatik True gönderiliyor (YouTube'un 2024 sonrası zorunlu kıldığı
 sentetik/değiştirilmiş içerik beyanı).
+
+Açıklamaya kanal hashtag'leri eklenir (ilk 3 tanesi YouTube'da
+başlığın üzerinde otomatik gösterilir). Etiketler (tags) kanalın
+anahtar kelime listesinden dolduruluyor (YouTube'un 500 karakter
+toplam sınırına uyacak şekilde).
 
 Kullanım:
     python scripts/upload_youtube.py --video output/final.mp4 \
@@ -22,14 +29,40 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 
 DEFAULT_CATEGORY_ID = "28"
+
+HASHTAGS = ["#GamingScience", "#TechMysteries", "#GamingFacts"]
+
 DESCRIPTION_TEMPLATE = (
     "{title}\n\n"
     "The Unseen Byte digs into the science, psychology, and hidden "
     "history that shape the games you play and the technology you use "
     "every day.\n\n"
     "This video was produced with AI-assisted narration and visuals.\n\n"
-    "New videos weekly."
+    "New videos weekly.\n\n"
+    + " ".join(HASHTAGS)
 )
+
+TAGS = [
+    "gaming science", "tech mysteries", "gaming psychology",
+    "hidden history technology", "gaming facts explained",
+    "science of video games", "tech documentary", "video game history",
+    "retro gaming facts", "esports science", "why games are addictive",
+    "video game industry secrets", "tech history documentary",
+    "hardware myths debunked", "gaming brain science",
+    "unsolved tech mysteries", "gaming culture explained",
+    "tech facts you didn't know", "forgotten technology",
+    "gaming neuroscience",
+]
+
+
+def build_tags_within_limit(tags: list, limit: int = 480) -> list:
+    result, total = [], 0
+    for tag in tags:
+        total += len(tag) + 1
+        if total > limit:
+            break
+        result.append(tag)
+    return result
 
 
 def get_access_token() -> str:
@@ -48,10 +81,11 @@ def initiate_upload(access_token: str, title: str, description: str, video_size:
         "snippet": {
             "title": title[:100],
             "description": description,
+            "tags": build_tags_within_limit(TAGS),
             "categoryId": DEFAULT_CATEGORY_ID,
         },
         "status": {
-            "privacyStatus": "private",
+            "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
             "containsSyntheticMedia": True,
         },
@@ -122,16 +156,16 @@ def main():
     print("Video yükleniyor (bu birkaç dakika sürebilir)...")
     result = upload_video_bytes(upload_url, args.video)
     video_id = result["id"]
-    print(f"Video yüklendi -> https://youtube.com/watch?v={video_id} (private)")
+    print(f"Video yüklendi -> https://youtube.com/watch?v={video_id} (public)")
 
     if args.thumbnail and os.path.exists(args.thumbnail):
         print("Kapak ayarlanıyor...")
         set_thumbnail(access_token, video_id, args.thumbnail)
         print("Kapak ayarlandı.")
 
-    print("\nTAMAMLANDI. Video 'private' (gizli) olarak yüklendi.")
-    print("YouTube Studio'ya girip kontrol et, uygunsa yayına al ve")
-    print("A/B Testing (Test & Compare) ile diğer 2 kapak/başlığı da ekle.")
+    print("\nTAMAMLANDI. Video HERKESE AÇIK olarak yayınlandı.")
+    print("İstersen YouTube Studio'dan A/B Testing (Test & Compare) ile")
+    print("diğer 2 kapak/başlığı da ekleyebilirsin.")
 
 
 if __name__ == "__main__":
