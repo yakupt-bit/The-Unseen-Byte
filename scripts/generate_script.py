@@ -8,8 +8,7 @@ Akış:
   3. Puan 7'nin altındaysa, eleştiriyi kullanarak script yeniden yazılır
      (en fazla 2 tur, sonsuz döngüye girmesin)
   4. Son olarak, script.md'ye yazmadan önce her türlü markdown başlığı/
-     zaman damgası temizlenir (bunlar TTS ile SESLİ okunacağı için
-     script.md'nin ilk andan itibaren tertemiz olması şart)
+     zaman damgası temizlenir
 
 Kullanım:
     python scripts/generate_script.py --facts facts.json --out script.md
@@ -22,7 +21,8 @@ import re
 
 import anthropic
 
-MODEL = "claude-sonnet-4-6"
+MODEL_CREATIVE = "claude-sonnet-4-6"
+MODEL_UTILITY = "claude-haiku-4-5-20251001"
 MAX_REVISIONS = 2
 QUALITY_THRESHOLD = 7
 SCRIPT_MAX_TOKENS = 8000
@@ -69,9 +69,9 @@ def load_trend_summary(trend_path):
     return "\n".join(lines)
 
 
-def call_claude(client, prompt, max_tokens=3000):
+def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=3000):
     response = client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -113,7 +113,7 @@ SCRIPT:
 Çıktı SADECE şu JSON formatında olsun:
 {{"score": 1-10 arası tam sayı, "feedback": "kısa, uygulanabilir eleştiri"}}
 """
-    raw = call_claude(client, prompt, max_tokens=500)
+    raw = call_claude(client, prompt, model=MODEL_UTILITY, max_tokens=500)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(cleaned)
