@@ -34,7 +34,13 @@ Kurallar:
   o kadar iyi, YETER Kİ her cümle gerçekten değer katsın, boş
   tekrar/doldurma olmasın.
 - Script'i doğal bölümlere ayır (giriş/hook, 3-5 ana bölüm, kapanış) -
-  her bölüm kendi içinde tam bir düşünceyi bitirsin.
+  her bölüm kendi içinde tam bir düşünceyi bitirsin. BÖLÜMLERİ SADECE
+  BOŞ SATIRLA ayır. ASLA "# Section 1", "Section 1:", "[0:45-4:00]"
+  gibi başlık/zaman damgası/etiket YAZMA - bu metin TTS ile SESLİ
+  OKUNACAK, "#" işaretini "hash" diye, zaman damgasını harfi harfine
+  okur. Script'te başlık, numaralandırma, zaman aralığı, markdown
+  işareti (#, *, -, [ ]) KESİNLİKLE olmamalı - SADECE düz, akan
+  konuşma cümleleri olsun.
 - Sonunda SAMİMİ VE İKNA EDİCİ ama agresif olmayan bir kapanış/abone
   çağrısı olsun. "Abone ol beğen yorum yap" spamı DEĞİL - izleyicinin
   gerçekten değer bulduğu bir video izlediğini hissettiren, doğal,
