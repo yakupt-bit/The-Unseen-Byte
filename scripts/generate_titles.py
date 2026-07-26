@@ -17,6 +17,7 @@ import anthropic
 MODEL_CREATIVE = "claude-sonnet-4-6"
 MODEL_UTILITY = "claude-haiku-4-5-20251001"
 NUM_VARIANTS = 3
+BRAND_SUFFIX = " | The Unseen Byte"
 
 
 def call_claude(client, prompt, model, max_tokens=800):
@@ -79,6 +80,11 @@ olabilir): {{"selected": ["title1", "title2", "title3"], "reasons": ["gerekçe1"
     raw_rank = call_claude(client, rank_prompt, MODEL_UTILITY, max_tokens=500)
     cleaned_rank = raw_rank.replace("```json", "").replace("```", "").strip()
     result = json.loads(cleaned_rank)
+
+    result["selected"] = [
+        t if t.endswith(BRAND_SUFFIX) else t + BRAND_SUFFIX
+        for t in result["selected"]
+    ]
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
