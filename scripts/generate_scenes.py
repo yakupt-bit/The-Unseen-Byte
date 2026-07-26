@@ -10,6 +10,7 @@ Kullanım:
 """
 import argparse
 import os
+import random
 
 import anthropic
 
@@ -22,19 +23,22 @@ STYLE_GUIDE = (
 
 MODEL = "claude-sonnet-4-6"
 
+MAX_SCENES = 20
+
 
 def split_into_scenes(script_text: str):
     paragraphs = [p.strip() for p in script_text.split("\n\n") if p.strip()]
-    return paragraphs
+    if len(paragraphs) <= MAX_SCENES:
+        return paragraphs
+
+    merged = []
+    group_size = -(-len(paragraphs) // MAX_SCENES)
+    for i in range(0, len(paragraphs), group_size):
+        merged.append("\n\n".join(paragraphs[i:i + group_size]))
+    return merged
 
 
 def to_safe_visual_prompt(client, narration_paragraph: str) -> str:
-    """Ham anlatım cümlesini güvenli, soyut, tamamen görsel bir sahne
-    tarifine çevirir. Gerçek isim/marka/kişi/olay YOK, sadece görsel
-    unsurlar (kompozisyon, nesneler, atmosfer) olsun.
-
-    ONEMLI: Insan yuzu MUMKUN OLDUGUNCA AZ kullanilir. Konu bir nesne/
-    yer/kavramsa SADECE onunla ilgili gorsel tarif et."""
     prompt = f"""Aşağıdaki YouTube anlatım cümlesini, bir görsel üretim
 AI'sine gönderilecek KISA (1-2 cümle) bir SAHNE TARİFİNE çevir.
 
@@ -77,17 +81,41 @@ def generate_image(prompt: str, out_path: str):
     download_output(task, out_path)
 
 
+FALLBACK_PROMPTS = [
+    "a moody abstract technology visualization, flowing data streams, deep blue and purple gradient, no people, no text",
+    "a dramatic close-up of glowing circuit board patterns, warm amber lighting, macro photography style, no people, no text",
+    "an atmospheric server room corridor with soft blue light trails, cinematic depth of field, no people, no text",
+    "a stack of retro gaming cartridges and consoles on a wooden desk, warm dramatic side lighting, no people, no text",
+    "an abstract network of glowing connected nodes on a dark background, cinematic and mysterious, no people, no text",
+]
+
+
 def generate_image_with_fallback(client, narration_paragraph: str, out_path: str):
     safe_prompt = to_safe_visual_prompt(client, narration_paragraph)
     try:
         generate_image(safe_prompt, out_path)
+        return
     except RuntimeError as e:
-        if "safety system" in str(e).lower():
-            print("  UYARI: güvenlik reddi, jenerik tarifle yeniden deniyorum...")
-            fallback_prompt = "an abstract, atmospheric technology-themed background, soft glowing shapes, no people, no text"
-            generate_image(fallback_prompt, out_path)
-        else:
+        if "safety system" not in str(e).lower():
             raise
+
+    print("  UYARI: güvenlik reddi, daha soyut bir tarifle tekrar deniyorum...")
+    try:
+        stricter_prompt = (
+            "a completely abstract, symbolic visual representation (no "
+            "literal depiction) inspired by this idea, purely artistic "
+            f"shapes/colors/lighting only: {narration_paragraph[:150]}"
+        )
+        even_safer = to_safe_visual_prompt(client, stricter_prompt)
+        generate_image(even_safer, out_path)
+        return
+    except RuntimeError as e:
+        if "safety system" not in str(e).lower():
+            raise
+
+    print("  UYARI: ikinci deneme de reddedildi, çeşitli jenerik görsellerden biriyle devam ediyorum...")
+    fallback_prompt = random.choice(FALLBACK_PROMPTS)
+    generate_image(fallback_prompt, out_path)
 
 
 def main():
