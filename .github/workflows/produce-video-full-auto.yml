@@ -121,6 +121,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          touch used_topics.json
           git add used_topics.json
           git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history"
           git push
