@@ -1,9 +1,14 @@
 """
 Üretilen videoyu YouTube'a OAuth ile yükler.
 
-Video DOĞRUDAN "public" (herkese açık) olarak yayınlanır - manuel
-inceleme adımı kaldırıldı (bilinçli tercih: pipeline artık test
-edildi, otomasyon "kur ve unut" şeklinde çalışıyor).
+Zamanlama mantığı:
+- Pipeline saat 17:00 TR'den ÖNCE biterse -> video "private" olarak
+  yüklenir, publishAt = bugün 17:00 TR olarak ayarlanır, YouTube o
+  saatte otomatik herkese açık yapar.
+- Pipeline saat 17:00 TR'yi GEÇTİKTEN sonra biterse (örn. 17:13'te
+  hazır olduysa) -> zamanlama yapılmaz, video doğrudan "public"
+  olarak hemen yayınlanır (geçmiş bir saate zamanlamak YouTube'da
+  hataya yol açar, bu yüzden bu durumda direkt yayına alıyoruz).
 
 AI-üretilen içerik olduğu için "containsSyntheticMedia" bayrağı
 otomatik True gönderiliyor (YouTube'un 2024 sonrası zorunlu kıldığı
@@ -21,6 +26,7 @@ Kullanım:
 import argparse
 import json
 import os
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -29,6 +35,7 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 
 DEFAULT_CATEGORY_ID = "28"
+TARGET_PUBLISH_HOUR_TR = 17  # Hedef yayın saati (Türkiye saati)
 
 HASHTAGS = ["#GamingScience", "#TechMysteries", "#GamingFacts"]
 
@@ -65,6 +72,25 @@ def build_tags_within_limit(tags: list, limit: int = 480) -> list:
     return result
 
 
+def compute_publish_at() -> str | None:
+    """
+    Şu an TR saatiyle hedef saati (17:00) geçmediyse, bugün 17:00 TR'nin
+    UTC/RFC3339 karşılığını döndürür (zamanlı yayın için).
+    Hedef saat zaten geçtiyse None döner (bu, "hemen yayınla" demektir).
+    """
+    tr_tz = timezone(timedelta(hours=3))  # Europe/Istanbul (DST'siz sabit ofset)
+    now_tr = datetime.now(tr_tz)
+    target_tr = now_tr.replace(
+        hour=TARGET_PUBLISH_HOUR_TR, minute=0, second=0, microsecond=0
+    )
+
+    if now_tr >= target_tr:
+        # Hedef saat zaten geçmiş (örn. 17:13'te hazır oldu) -> hemen yayınla
+        return None
+
+    return target_tr.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def get_access_token() -> str:
     resp = requests.post(TOKEN_URL, data={
         "client_id": os.environ["YT_CLIENT_ID"],
@@ -76,7 +102,19 @@ def get_access_token() -> str:
     return resp.json()["access_token"]
 
 
-def initiate_upload(access_token: str, title: str, description: str, video_size: int) -> str:
+def initiate_upload(access_token: str, title: str, description: str, video_size: int) -> tuple:
+    publish_at = compute_publish_at()
+
+    status = {
+        "selfDeclaredMadeForKids": False,
+        "containsSyntheticMedia": True,
+    }
+    if publish_at:
+        status["privacyStatus"] = "private"
+        status["publishAt"] = publish_at
+    else:
+        status["privacyStatus"] = "public"
+
     metadata = {
         "snippet": {
             "title": title[:100],
@@ -84,11 +122,7 @@ def initiate_upload(access_token: str, title: str, description: str, video_size:
             "tags": build_tags_within_limit(TAGS),
             "categoryId": DEFAULT_CATEGORY_ID,
         },
-        "status": {
-            "privacyStatus": "public",
-            "selfDeclaredMadeForKids": False,
-            "containsSyntheticMedia": True,
-        },
+        "status": status,
     }
     resp = requests.post(
         f"{UPLOAD_URL}?uploadType=resumable&part=snippet,status",
@@ -102,7 +136,7 @@ def initiate_upload(access_token: str, title: str, description: str, video_size:
         timeout=30,
     )
     resp.raise_for_status()
-    return resp.headers["Location"]
+    return resp.headers["Location"], publish_at
 
 
 def upload_video_bytes(upload_url: str, video_path: str) -> dict:
@@ -151,19 +185,27 @@ def main():
     access_token = get_access_token()
 
     print(f"Yükleme başlatılıyor: \"{title}\"")
-    upload_url = initiate_upload(access_token, title, description, video_size)
+    upload_url, publish_at = initiate_upload(access_token, title, description, video_size)
 
     print("Video yükleniyor (bu birkaç dakika sürebilir)...")
     result = upload_video_bytes(upload_url, args.video)
     video_id = result["id"]
-    print(f"Video yüklendi -> https://youtube.com/watch?v={video_id} (public)")
+
+    if publish_at:
+        print(f"Video yüklendi -> https://youtube.com/watch?v={video_id}")
+        print(f"(private, {publish_at} UTC'de -bugün 17:00 TR- otomatik yayına girecek)")
+    else:
+        print(f"Video yüklendi -> https://youtube.com/watch?v={video_id} (public, hemen yayınlandı)")
 
     if args.thumbnail and os.path.exists(args.thumbnail):
         print("Kapak ayarlanıyor...")
         set_thumbnail(access_token, video_id, args.thumbnail)
         print("Kapak ayarlandı.")
 
-    print("\nTAMAMLANDI. Video HERKESE AÇIK olarak yayınlandı.")
+    if publish_at:
+        print("\nTAMAMLANDI. Video 17:00 TR saatinde otomatik yayına girecek.")
+    else:
+        print("\nTAMAMLANDI. Saat 17:00 TR zaten geçtiği için video hemen HERKESE AÇIK olarak yayınlandı.")
     print("İstersen YouTube Studio'dan A/B Testing (Test & Compare) ile")
     print("diğer 2 kapak/başlığı da ekleyebilirsin.")
 
