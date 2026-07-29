@@ -47,6 +47,14 @@ kullanma - kanal İngilizce ve global bir kitleye hitap ediyor.
 Her biri merak açığı yaratmalı (bilgiyi tam vermeden merak uyandırmalı),
 abartılı/yalan olmamalı, 60 karakteri geçmemeli, tık tuzağı olmamalı.
 
+KRİTİK KURAL - başlık kapağın CEVABI değil GELİŞMESİDİR:
+Kapak görseli izleyiciye bir soru/gizem sunar (örn. bir nesne, bir
+çelişkili durum). Başlık bu sorunun CEVABINI VERMEZ, sadece konunun
+BAĞLAMINI/GELİŞMESİNİ ekler - somut bir çelişki, rakam veya anomali
+içerir (ör. "sold for $X", "hidden for Y years", "no one noticed").
+Asıl cevap/sonuç SADECE videoyu izleyince ortaya çıkmalı. Başlık,
+kapaktaki merakı KAPATMAMALI, bir adım daha derinleştirmeli.
+
 Global çapta kanıtlanmış gizem/belgesel kanallarından çıkarılan
 kalıpları kullan, adaylar bu FARKLI YAKLAŞIMLARI temsil etsin:
 1. Soru formatı ("Is X Really Y?", "Why Does X Happen?")
@@ -68,9 +76,10 @@ SCRIPT:
     candidates = json.loads(cleaned)
 
     rank_prompt = f"""Aşağıdaki İngilizce YouTube başlık adaylarından en
-güçlü {NUM_VARIANTS} tanesini seç. Kriterler: merak açığı gücü, netlik,
-özgünlük hissi, VE birbirinden farklı yaklaşımlar olması (aynı kalıbın
-tekrarı olmasın - A/B testi anlamlı olsun diye).
+güçlü {NUM_VARIANTS} tanesini seç. Kriterler: merak açığı gücü (cevabı
+vermeden gelişmeyi vermesi), netlik, özgünlük hissi, VE birbirinden
+farklı yaklaşımlar olması (aynı kalıbın tekrarı olmasın - A/B testi
+anlamlı olsun diye).
 
 ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 
