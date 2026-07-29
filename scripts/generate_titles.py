@@ -1,9 +1,13 @@
 """
-Script için 8 başlık adayı üretir, en güçlü 3'ünü seçer ve
-titles.json'a kaydeder. Bu 3 başlık, YouTube Studio'nun native
-"A/B Testing (Test & Compare)" özelliğine elle yüklenmek üzere
-hazırlanır - kazananı biz değil, YouTube'un gerçek izleyici verisi
-seçer (izlenme süresi payına göre).
+Script için 8 başlık adayı üretir, içlerinden EN GÜÇLÜ olanı seçer ve
+titles.json'a kaydeder.
+
+NOT: YouTube'un native "Test & Compare" (A/B testing) özelliği sadece
+YouTube Studio arayüzünden (desktop, elle) kullanılabiliyor, API
+üzerinden erişilemiyor; ayrıca YouTube Partner Program (YPP) üyeliği
+gerektiriyor. Kanal bu eşiklere ulaşana kadar tek başlık üretmek daha
+mantıklı - bu yüzden A/B akışı kaldırıldı, sistem artık doğrudan en
+güçlü tek başlığı seçip kullanıyor.
 
 Kullanım:
     python scripts/generate_titles.py --script script.md --out titles.json
@@ -16,7 +20,6 @@ import anthropic
 
 MODEL_CREATIVE = "claude-sonnet-4-6"
 MODEL_UTILITY = "claude-haiku-4-5-20251001"
-NUM_VARIANTS = 3
 BRAND_SUFFIX = " | The Unseen Byte"
 
 
@@ -62,9 +65,6 @@ kalıpları kullan, adaylar bu FARKLI YAKLAŞIMLARI temsil etsin:
 3. Güçlü iddia + merak açığı ("The Real Reason X Never Y")
 4. Sayı/liste formatı ("X Things You Didn't Know About Y")
 5. Doğrudan izleyiciye hitap eden meydan okuma tarzı
-Adaylar birbirinden GERÇEKTEN farklı olsun (A/B testinde anlamlı
-karşılaştırma olsun diye) - her biri yukarıdaki kalıplardan farklı
-birini kullanabilir.
 
 SCRIPT:
 {script}
@@ -75,32 +75,30 @@ SCRIPT:
     cleaned = raw_candidates.replace("```json", "").replace("```", "").strip()
     candidates = json.loads(cleaned)
 
-    rank_prompt = f"""Aşağıdaki İngilizce YouTube başlık adaylarından en
-güçlü {NUM_VARIANTS} tanesini seç. Kriterler: merak açığı gücü (cevabı
-vermeden gelişmeyi vermesi), netlik, özgünlük hissi, VE birbirinden
-farklı yaklaşımlar olması (aynı kalıbın tekrarı olmasın - A/B testi
-anlamlı olsun diye).
+    rank_prompt = f"""Aşağıdaki İngilizce YouTube başlık adaylarından EN
+GÜÇLÜ tek bir tanesini seç. Kriterler: merak açığı gücü (cevabı
+vermeden gelişmeyi vermesi), netlik, özgünlük hissi, tık tuzağı
+olmaması.
 
 ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 
-Çıktı SADECE JSON (başlıklar İngilizce kalacak, gerekçeler Türkçe
-olabilir): {{"selected": ["title1", "title2", "title3"], "reasons": ["gerekçe1", "gerekçe2", "gerekçe3"]}}"""
+Çıktı SADECE JSON (başlık İngilizce kalacak, gerekçe Türkçe olabilir):
+{{"selected": "title", "reason": "gerekçe"}}"""
 
-    raw_rank = call_claude(client, rank_prompt, MODEL_UTILITY, max_tokens=500)
+    raw_rank = call_claude(client, rank_prompt, MODEL_UTILITY, max_tokens=300)
     cleaned_rank = raw_rank.replace("```json", "").replace("```", "").strip()
     result = json.loads(cleaned_rank)
 
-    result["selected"] = [
-        t if t.endswith(BRAND_SUFFIX) else t + BRAND_SUFFIX
-        for t in result["selected"]
-    ]
+    final_title = result["selected"]
+    if not final_title.endswith(BRAND_SUFFIX):
+        final_title += BRAND_SUFFIX
+
+    output = {"selected": [final_title], "reasons": [result["reason"]]}
 
     with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+        json.dump(output, f, ensure_ascii=False, indent=2)
 
-    print("Seçilen 3 başlık (YouTube A/B testine yükle):")
-    for title, reason in zip(result["selected"], result["reasons"]):
-        print(f"  - {title}  ({reason})")
+    print(f"Seçilen başlık: {final_title}  ({result['reason']})")
 
 
 if __name__ == "__main__":
