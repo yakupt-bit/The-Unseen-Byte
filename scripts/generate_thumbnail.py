@@ -4,8 +4,16 @@ titles.json'daki 3 başlığın her biri için AYRI bir kapak (thumbnail)
 Sonuç: 3 farklı kapak dosyası - YouTube Studio'nun native A/B Testing
 özelliğine elle yüklenmek üzere hazırlanır (bkz. generate_titles.py).
 
+ÖNEMLİ (kapak-başlık ilişkisi):
+Kapak, başlığın bir tekrarı DEĞİLDİR. Kapak, izleyiciye ham bir
+SORU/GİZEM sunar (görsel + 3-5 kelimelik kışkırtıcı metin); başlık bu
+sorunun bağlamını/gelişmesini verir ama cevabı vermez; videonun kendisi
+asıl cevabı verir. Bu yüzden kapak için Claude'dan başlıktan bağımsız,
+daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
+
 Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
+    python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/ --script script.md
 """
 import argparse
 import json
@@ -13,9 +21,12 @@ import os
 import random
 import textwrap
 
+import anthropic
 from PIL import Image, ImageDraw, ImageFont
 
 from wiro_client import run_model, download_output
+
+MODEL_CREATIVE = "claude-sonnet-4-6"
 
 THUMBNAIL_STYLE = (
     "bold high-contrast digital illustration, dramatic lighting, "
@@ -28,6 +39,58 @@ THUMBNAIL_STYLE = (
 
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 ANNOTATION_COLOR = (235, 45, 45)
+
+
+def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return "".join(b.text for b in response.content if b.type == "text")
+
+
+def generate_thumbnail_concept(client, title: str, script_excerpt: str) -> dict:
+    """
+    Başlıktan BAĞIMSIZ bir kapak konsepti üretir: bir görsel açıklama
+    (image prompt) ve çok kısa bir kışkırtıcı metin (hook text).
+    Kapak, başlığın vereceği bağlamı/gelişmeyi VERMEMELİDİR - sadece
+    ham soruyu/gizemi ortaya koymalıdır.
+    """
+    prompt = f"""Bir YouTube kapak görseli (thumbnail) konsepti üret.
+
+KESİN KURAL: Bu kapak, aşağıdaki başlıkla AYNI bilgiyi VERMEMELİ.
+Başlık zaten konunun gelişmesini/bağlamını açıklıyor. Kapağın görevi
+SADECE ham bir soru/gizem/çelişki sunmak - izleyici "bu ne, ne oluyor"
+desin, başlıktaki bilgiyi henüz bilmesin.
+
+BAŞLIK (kapakta bunu tekrar etme, bundan bağımsız düşün): {title}
+
+SCRIPT'TEN KISA ALINTI (konunun özünü anlamak için, kapak metnine
+doğrudan kopyalama): {script_excerpt[:800]}
+
+Üret:
+1. "visual_prompt": İngilizce, somut bir SAHNE/NESNE/AN tarifi (ör. bir
+   nesnenin garip bir detayı, açıklanamayan bir an). Kişi/karakter
+   isimlerinden kaçın, jenerik ve görsel olarak net olsun.
+2. "hook_text": İngilizce, TÜM BÜYÜK HARF, EN FAZLA 5 KELİME, soru
+   işareti kullanmadan da merak uyandıran kışkırtıcı bir ifade
+   (ör. "THE PART NO ONE EXPLAINS", "HIDDEN FOR 30 YEARS"). Başlıktaki
+   kelimeleri birebir tekrarlama.
+
+Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "..."}}"""
+
+    raw = call_claude(client, prompt)
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Güvenli düşüş: başlıktan türetilmiş jenerik bir konsept
+        return {
+            "visual_prompt": "a mysterious object under dramatic lighting, "
+                              "close-up on one strange unexplained detail",
+            "hook_text": "WHAT NO ONE EXPLAINS",
+        }
 
 
 def generate_background(prompt: str, out_path: str):
@@ -90,7 +153,7 @@ def draw_annotation(draw, img_w, img_h, avoid_bottom_frac=0.45):
         ], fill=ANNOTATION_COLOR)
 
 
-def overlay_text(image_path: str, text: str, out_path: str):
+def overlay_text(image_path: str, hook_text: str, out_path: str):
     img = Image.open(image_path).convert("RGB")
     draw = ImageDraw.Draw(img, "RGBA")
 
@@ -101,9 +164,7 @@ def overlay_text(image_path: str, text: str, out_path: str):
     x_margin = int(img.width * 0.04)
     bottom_margin = int(img.height * 0.05)
 
-    core_text = text.split("|")[0].strip()
-    words = core_text.split()
-    short_text = " ".join(words[:6]).upper()
+    short_text = hook_text.strip().upper()
 
     font_size = int(img.height * 0.14)
     min_font_size = int(img.height * 0.05)
@@ -148,6 +209,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--titles", required=True, help="generate_titles.py çıktısı (3 başlık)")
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--script", required=False, default="script.md",
+                         help="Kapak konsepti için bağlam olarak kullanılacak script dosyası")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -155,13 +218,23 @@ def main():
     with open(args.titles, "r", encoding="utf-8") as f:
         titles_data = json.load(f)
 
+    script_excerpt = ""
+    if os.path.exists(args.script):
+        with open(args.script, "r", encoding="utf-8") as f:
+            script_excerpt = f.read()
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
     for i, title in enumerate(titles_data["selected"], start=1):
+        concept = generate_thumbnail_concept(client, title, script_excerpt)
+
         raw_path = os.path.join(args.out_dir, f"raw_{i}.png")
-        generate_background(title, raw_path)
+        generate_background(concept["visual_prompt"], raw_path)
 
         final_path = os.path.join(args.out_dir, f"thumbnail_{i}.png")
-        overlay_text(raw_path, title, final_path)
-        print(f"Kapak {i}/3 hazır -> {final_path}  (\"{title}\")")
+        overlay_text(raw_path, concept["hook_text"], final_path)
+        print(f"Kapak {i}/3 hazır -> {final_path}  "
+              f"(hook: \"{concept['hook_text']}\", başlık: \"{title}\")")
 
 
 if __name__ == "__main__":
