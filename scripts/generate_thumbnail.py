@@ -1,8 +1,6 @@
 """
-titles.json'daki 3 başlığın her biri için AYRI bir kapak (thumbnail)
-üretir (Wiro API, openai/gpt-image-2) ve üzerine metin bindirir (PIL).
-Sonuç: 3 farklı kapak dosyası - YouTube Studio'nun native A/B Testing
-özelliğine elle yüklenmek üzere hazırlanır (bkz. generate_titles.py).
+Seçilen tek başlık için TEK bir kapak (thumbnail) üretir (Wiro API,
+openai/gpt-image-2) ve üzerine metin bindirir (PIL).
 
 ÖNEMLİ (kapak-başlık ilişkisi):
 Kapak, başlığın bir tekrarı DEĞİLDİR. Kapak, izleyiciye ham bir
@@ -10,6 +8,10 @@ SORU/GİZEM sunar (görsel + 3-5 kelimelik kışkırtıcı metin); başlık bu
 sorunun bağlamını/gelişmesini verir ama cevabı vermez; videonun kendisi
 asıl cevabı verir. Bu yüzden kapak için Claude'dan başlıktan bağımsız,
 daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
+
+NOT: YouTube'un native A/B testi (Test & Compare) API'den erişilemiyor
+ve YPP üyeliği gerektiriyor, bu yüzden sistem artık çoklu kapak yerine
+tek, en güçlü kapağı üretiyor (bkz. generate_titles.py).
 
 Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
@@ -85,7 +87,7 @@ doğrudan kopyalama): {script_excerpt[:800]}
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        # Güvenli düşüş: başlıktan türetilmiş jenerik bir konsept
+        # Güvenli düşüş: jenerik bir konsept
         return {
             "visual_prompt": "a mysterious object under dramatic lighting, "
                               "close-up on one strange unexplained detail",
@@ -207,7 +209,7 @@ def overlay_text(image_path: str, hook_text: str, out_path: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--titles", required=True, help="generate_titles.py çıktısı (3 başlık)")
+    parser.add_argument("--titles", required=True, help="generate_titles.py çıktısı")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--script", required=False, default="script.md",
                          help="Kapak konsepti için bağlam olarak kullanılacak script dosyası")
@@ -218,6 +220,8 @@ def main():
     with open(args.titles, "r", encoding="utf-8") as f:
         titles_data = json.load(f)
 
+    title = titles_data["selected"][0]
+
     script_excerpt = ""
     if os.path.exists(args.script):
         with open(args.script, "r", encoding="utf-8") as f:
@@ -225,16 +229,15 @@ def main():
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    for i, title in enumerate(titles_data["selected"], start=1):
-        concept = generate_thumbnail_concept(client, title, script_excerpt)
+    concept = generate_thumbnail_concept(client, title, script_excerpt)
 
-        raw_path = os.path.join(args.out_dir, f"raw_{i}.png")
-        generate_background(concept["visual_prompt"], raw_path)
+    raw_path = os.path.join(args.out_dir, "raw_1.png")
+    generate_background(concept["visual_prompt"], raw_path)
 
-        final_path = os.path.join(args.out_dir, f"thumbnail_{i}.png")
-        overlay_text(raw_path, concept["hook_text"], final_path)
-        print(f"Kapak {i}/3 hazır -> {final_path}  "
-              f"(hook: \"{concept['hook_text']}\", başlık: \"{title}\")")
+    final_path = os.path.join(args.out_dir, "thumbnail_1.png")
+    overlay_text(raw_path, concept["hook_text"], final_path)
+    print(f"Kapak hazır -> {final_path}  "
+          f"(hook: \"{concept['hook_text']}\", başlık: \"{title}\")")
 
 
 if __name__ == "__main__":
