@@ -27,6 +27,23 @@ MAX_REVISIONS = 2
 QUALITY_THRESHOLD = 7
 SCRIPT_MAX_TOKENS = 8000
 
+TONE_AND_STYLE_RULES = """
+
+TON VE STİL KURALLARI (mutlaka uygula):
+- Resmi bir rapor gibi değil, meraklı ve bilgili bir arkadaşın anlattığı
+  gibi yaz. Kısa, doğal, konuşma diline yakın cümleler kur.
+- Gerektiğinde belirsizliği açıkça kabul et: "Kaynaklar burada tam
+  örtüşmüyor", "Bunun tam olarak nasıl olduğu hâlâ net değil" gibi
+  ifadeler kullanmaktan çekinme - bu, sahte kesinlikten daha güvenilir
+  durur ve daha insan hissettirir.
+- Somutlaştırıcı referanslar kullan: "arşiv kayıtlarına göre",
+  "koleksiyoncular arasında bilinen bir ayrıntı" gibi ifadelerle
+  anlatıyı köklendir.
+- MERAK AÇIĞINI videonun genelinde koru: en can alıcı bilgiyi/sonucu
+  ortaya doğru veya sona doğru ver, başlarda her şeyi açıklama.
+  Video, başlıkta/kapakta sorulan sorunun CEVABI olmalı.
+"""
+
 
 def strip_meta_formatting(text: str) -> str:
     lines = text.split("\n")
@@ -82,6 +99,7 @@ def write_script(client, niche, facts_json, trend_summary="", test_mode=False):
     template = load_text("prompts/script_prompt.md")
     prompt = template.replace("{NICHE}", niche).replace("{FACTS}", facts_json)
     prompt += trend_summary
+    prompt += TONE_AND_STYLE_RULES
     if test_mode:
         prompt += (
             "\n\nTEST MODU: Bu bir pipeline testi, gerçek yayın değil. "
@@ -98,10 +116,13 @@ def write_script(client, niche, facts_json, trend_summary="", test_mode=False):
 def critique_script(client, niche, script):
     prompt = f"""Aşağıdaki YouTube script'ini şu kriterlere göre değerlendir:
 1. İlk 15 saniye gerçekten yakalayıcı mı?
-2. Ton doğal mı, yoksa robotik/kurumsal mı?
+2. Ton doğal mı, yoksa robotik/kurumsal mı? Samimi, konuşma diline
+   yakın mı, yoksa "yapay zeka odunu" gibi mi duruyor?
 3. Kaynaklar doğal cümleler içinde mi, yoksa dipnot gibi mi duruyor?
 4. Evergreen kuralına uyuyor mu (güncel olay referansı var mı)?
-5. Script'te markdown başlığı (#), bölüm etiketi veya zaman damgası
+5. Script, en can alıcı bilgiyi/sonucu erkenden mi veriyor, yoksa
+   merak açığını sona doğru mu koruyor?
+6. Script'te markdown başlığı (#), bölüm etiketi veya zaman damgası
    ([0:45-4:00] gibi) VAR MI? Varsa mutlaka feedback'te belirt, bunlar
    asla olmamalı.
 
@@ -130,6 +151,7 @@ NİŞ: {niche}
 
 MEVCUT SCRIPT:
 {script}
+{TONE_AND_STYLE_RULES}
 
 Düzeltilmiş TAM script'i yaz, sadece metni ver, yorum ekleme.
 ÖNEMLİ: Script %100 İngilizce olmalı, Türkçe kelime kullanma.
