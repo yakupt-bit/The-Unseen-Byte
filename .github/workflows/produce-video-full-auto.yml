@@ -77,12 +77,13 @@ jobs:
           python scripts/mix_audio.py --voice audio/voiceover.mp3 \
             --music-dir assets/music/ --out audio/final_mix.mp3
 
-      - name: 7) Scene images (Wiro reve/generate)
+      - name: 7) Scene images (Pexels stock + Wiro reve/generate)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/generate_scenes.py --script script.md --out scenes/
-
+        
       - name: 8) 3 thumbnail variants (Wiro reve/generate)
         env:
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
