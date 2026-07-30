@@ -10,6 +10,9 @@ Akış:
   4. Son olarak, script.md'ye yazmadan önce her türlü markdown başlığı/
      zaman damgası temizlenir
 
+Her Claude API çağrısı geçici hatalara (500, rate limit, bağlantı
+kopması) karşı otomatik olarak yeniden dener (bkz. call_claude).
+
 Kullanım:
     python scripts/generate_script.py --facts facts.json --out script.md
     python scripts/generate_script.py --facts facts.json --out script.md --test
@@ -18,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import time
 
 import anthropic
 
@@ -26,6 +30,16 @@ MODEL_UTILITY = "claude-haiku-4-5-20251001"
 MAX_REVISIONS = 2
 QUALITY_THRESHOLD = 7
 SCRIPT_MAX_TOKENS = 8000
+
+MAX_RETRIES = 4
+RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
+
+RETRYABLE_EXCEPTIONS = (
+    anthropic.APIConnectionError,
+    anthropic.APITimeoutError,
+    anthropic.InternalServerError,
+    anthropic.RateLimitError,
+)
 
 TONE_AND_STYLE_RULES = """
 
@@ -87,12 +101,26 @@ def load_trend_summary(trend_path):
 
 
 def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=3000):
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return "".join(b.text for b in response.content if b.type == "text")
+    """Claude'a istek atar; geçici hatalarda (500/rate limit/bağlantı)
+    üstel bekleme ile otomatik olarak yeniden dener."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return "".join(b.text for b in response.content if b.type == "text")
+        except RETRYABLE_EXCEPTIONS as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"  UYARI: Claude API geçici hata ({type(e).__name__}), "
+                      f"{delay}sn sonra tekrar deneniyor "
+                      f"(deneme {attempt + 1}/{MAX_RETRIES})...")
+                time.sleep(delay)
+    raise last_error
 
 
 def write_script(client, niche, facts_json, trend_summary="", test_mode=False):
