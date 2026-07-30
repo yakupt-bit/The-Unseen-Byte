@@ -1,18 +1,28 @@
 """
-Script'i sahnelere ayırır. Her sahne için ÖNCE Claude ile ham anlatım
-metnini güvenli, tamamen görsel bir sahne tarifine çevirir (isim/marka/
-gerçek kişi gibi güvenlik reddi tetikleyebilecek unsurları temizler,
-insan yüzünü minimize eder), SONRA o tarifi Wiro API (openai/gpt-image-2)
-ile görsele çevirir.
+Script'i sahnelere ayırır. Her sahne için ÖNCE Claude'a sahnenin GENEL/
+ATMOSFERİK mi yoksa script'e ÖZGÜ/BENZERSİZ bir an mı olduğunu sorar:
+
+  - GENEL/ATMOSFERİK sahneler (çoğunluk) -> Pexels'ten stok video aranır
+    (ör. klavye yazan eller, sunucu odası, retro konsol genel çekimi).
+    Bulunursa scene_XXX.mp4 olarak kaydedilir.
+  - ÖZGÜ/BENZERSİZ sahneler (script'in tam olarak bahsettiği tek bir
+    nesne/an) veya Pexels'te uygun sonuç bulunamazsa -> AI görsel
+    üretimine (Wiro, openai/gpt-image-2) düşülür, scene_XXX.png olarak
+    kaydedilir.
+
+assemble_video.py hem .png (Ken Burns animasyonu) hem .mp4 (stok video,
+trim/loop) sahneleri birlikte işleyebiliyor.
 
 Kullanım:
     python scripts/generate_scenes.py --script script.md --out scenes/
 """
 import argparse
+import json
 import os
 import random
 
 import anthropic
+import requests
 
 from wiro_client import run_model, download_output
 
@@ -22,8 +32,9 @@ STYLE_GUIDE = (
 )
 
 MODEL = "claude-sonnet-4-6"
-
 MAX_SCENES = 20
+
+PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 
 
 def split_into_scenes(script_text: str):
@@ -38,35 +49,96 @@ def split_into_scenes(script_text: str):
     return merged
 
 
-def to_safe_visual_prompt(client, narration_paragraph: str) -> str:
-    prompt = f"""Aşağıdaki YouTube anlatım cümlesini, bir görsel üretim
-AI'sine gönderilecek KISA (1-2 cümle) bir SAHNE TARİFİNE çevir.
+def plan_scene(client, narration_paragraph: str) -> dict:
+    """
+    Sahne için hem stok video arama sorgusu hem AI görsel tarifi hem de
+    "bu sahne stok video için uygun mu" kararını tek çağrıda üretir.
+    """
+    prompt = f"""Aşağıdaki YouTube anlatım paragrafı için bir sahne planı
+üret.
 
-Kurallar:
-- Gerçek kişi, marka, oyun adı, şirket adı KULLANMA - bunun yerine
-  soyut/temsili görseller tarif et.
-- INSAN YUZU COK AZ KULLAN. Öncelik sırası: (1) eğer konu bir nesne,
-  yer, ekran, kavram ise SADECE onu tarif et, insan hiç olmasın.
-  (2) konu gerçekten bir kişiyi/insan davranışını gerektiriyorsa,
-  yüzü göstermeyen temsili bir tasvir kullan: silüet, arkadan çekim,
-  sadece eller, uzak/genel plan, karanlıkta siluet gibi. Yakın plan
-  net yüz gösterme.
-- Sadece GÖRSEL unsurları anlat: kompozisyon, nesneler, ortam, ışık.
-  Anlatının kendisini veya iddiaları tekrar etme.
-  Şiddet, silah, kan içeren hiçbir şey yazma.
-- İngilizce yaz.
+ÖNCE KARAR VER: Bu paragraf GENEL/ATMOSFERİK bir an mı (ör. bir
+kavramı, ortamı, genel bir eylemi anlatıyor - stok video ile
+karşılanabilir) yoksa script'in TAM OLARAK bahsettiği TEK, BENZERSİZ,
+SPESİFİK bir nesne/an mı (ör. belirli bir prototipin belirli bir
+detayı - sadece özel üretilmiş bir görselle karşılanabilir)?
+Mümkün olduğunca "genel/atmosferik" (use_stock: true) sınıflandırmayı
+tercih et, çünkü stok video daha gerçekçi durur - sadece gerçekten
+script'e özgü, somut bir detay varsa use_stock: false yap.
 
-ANLATIM CÜMLESİ:
+Üret:
+1. "use_stock": true veya false (yukarıdaki karara göre)
+2. "stock_query": İngilizce, 2-4 kelimelik, JENERİK bir stok video
+   arama sorgusu (ör. "server room lights", "retro game console",
+   "typing keyboard close up"). Marka/gerçek kişi/oyun adı KULLANMA.
+3. "visual_prompt": AI görsel üretimi için İngilizce, 1-2 cümlelik
+   sahne tarifi (use_stock false ise ya da stok bulunamazsa
+   kullanılacak yedek). Gerçek kişi/marka/oyun adı kullanma, insan
+   yüzünü minimize et (silüet/arkadan çekim/eller tercih et), şiddet/
+   silah/kan içerme.
+
+ANLATIM PARAGRAFI:
 {narration_paragraph}
 
-SADECE sahne tarifini yaz, başka bir şey ekleme."""
+Çıktı SADECE JSON: {{"use_stock": true, "stock_query": "...", "visual_prompt": "..."}}"""
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=150,
+        max_tokens=250,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in response.content if b.type == "text").strip()
+    raw = "".join(b.text for b in response.content if b.type == "text")
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {
+            "use_stock": False,
+            "stock_query": "",
+            "visual_prompt": "a moody abstract technology visualization, "
+                              "no people, no text",
+        }
+
+
+def search_pexels_video(query: str, api_key: str, out_path: str) -> bool:
+    """Pexels'te sorguyu arar, ilk uygun klibi indirir. Bulamazsa False döner."""
+    if not api_key or not query:
+        return False
+
+    try:
+        resp = requests.get(
+            PEXELS_SEARCH_URL,
+            headers={"Authorization": api_key},
+            params={"query": query, "per_page": 5, "orientation": "landscape"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("videos", [])
+        if not results:
+            return False
+
+        video = results[0]
+        candidates = [
+            f for f in video.get("video_files", [])
+            if f.get("file_type") == "video/mp4" and f.get("width")
+        ]
+        if not candidates:
+            return False
+
+        # Gereksiz yere çok büyük dosya indirmemek için 1280 genişliğine
+        # en yakın (ama altına düşmeyen) dosyayı tercih et.
+        candidates.sort(key=lambda f: (f["width"] < 1280, abs(f["width"] - 1280)))
+        best = candidates[0]
+
+        video_resp = requests.get(best["link"], stream=True, timeout=60)
+        video_resp.raise_for_status()
+        with open(out_path, "wb") as f:
+            for chunk in video_resp.iter_content(chunk_size=1 << 16):
+                f.write(chunk)
+        return True
+
+    except (requests.RequestException, KeyError, IndexError):
+        return False
 
 
 def generate_image(prompt: str, out_path: str):
@@ -90,10 +162,9 @@ FALLBACK_PROMPTS = [
 ]
 
 
-def generate_image_with_fallback(client, narration_paragraph: str, out_path: str):
-    safe_prompt = to_safe_visual_prompt(client, narration_paragraph)
+def generate_image_with_fallback(client, visual_prompt: str, out_path: str):
     try:
-        generate_image(safe_prompt, out_path)
+        generate_image(visual_prompt, out_path)
         return
     except RuntimeError as e:
         if "safety system" not in str(e).lower():
@@ -104,16 +175,15 @@ def generate_image_with_fallback(client, narration_paragraph: str, out_path: str
         stricter_prompt = (
             "a completely abstract, symbolic visual representation (no "
             "literal depiction) inspired by this idea, purely artistic "
-            f"shapes/colors/lighting only: {narration_paragraph[:150]}"
+            f"shapes/colors/lighting only: {visual_prompt[:150]}"
         )
-        even_safer = to_safe_visual_prompt(client, stricter_prompt)
-        generate_image(even_safer, out_path)
+        generate_image(stricter_prompt, out_path)
         return
     except RuntimeError as e:
         if "safety system" not in str(e).lower():
             raise
 
-    print("  UYARI: ikinci deneme de reddedildi, çeşitli jenerik görsellerden biriyle devam ediyorum...")
+    print("  UYARI: ikinci deneme de reddedildi, jenerik görsellerden biriyle devam ediyorum...")
     fallback_prompt = random.choice(FALLBACK_PROMPTS)
     generate_image(fallback_prompt, out_path)
 
@@ -130,12 +200,32 @@ def main():
         script_text = f.read()
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    pexels_key = os.environ.get("PEXELS_API_KEY", "")
     scenes = split_into_scenes(script_text)
 
+    stock_count = 0
+    ai_count = 0
+
     for i, scene_text in enumerate(scenes, start=1):
-        out_path = os.path.join(args.out, f"scene_{i:03d}.png")
-        generate_image_with_fallback(client, scene_text, out_path)
-        print(f"Sahne {i}/{len(scenes)} oluşturuldu -> {out_path}")
+        plan = plan_scene(client, scene_text)
+
+        got_stock = False
+        if plan.get("use_stock"):
+            mp4_path = os.path.join(args.out, f"scene_{i:03d}.mp4")
+            got_stock = search_pexels_video(plan.get("stock_query", ""), pexels_key, mp4_path)
+            if got_stock:
+                stock_count += 1
+                print(f"Sahne {i}/{len(scenes)}: STOK video -> {mp4_path} "
+                      f"(sorgu: \"{plan.get('stock_query')}\")")
+
+        if not got_stock:
+            png_path = os.path.join(args.out, f"scene_{i:03d}.png")
+            generate_image_with_fallback(client, plan.get("visual_prompt", ""), png_path)
+            ai_count += 1
+            print(f"Sahne {i}/{len(scenes)}: AI görsel -> {png_path}")
+
+    print(f"\nToplam: {stock_count} stok video, {ai_count} AI görsel "
+          f"({len(scenes)} sahne)")
 
 
 if __name__ == "__main__":
