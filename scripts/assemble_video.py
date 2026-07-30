@@ -1,11 +1,16 @@
 """
-scenes/ klasöründeki görselleri, sesin süresine göre SÜREKLİ hareket
-eden animasyon klipleri haline getirir (zoom-in/zoom-out + sağ/sol/
-yukarı/aşağı pan kombinasyonları - klip boyunca ASLA sabit kalmaz,
-tüm süreye yayılacak şekilde hesaplanıyor), aralarına 15 farklı geçiş
-efektinden (art arda AYNISI tekrarlanmayacak şekilde) birini koyarak
-birleştirir. Hem animasyon stili hem geçiş efekti art arda gelen
-klipler arasında TEKRARLANMAZ.
+scenes/ klasöründeki görselleri VE stok video kliplerini, sesin süresine
+göre klipler haline getirip aralarına 15 farklı geçiş efektinden birini
+koyarak birleştirir.
+
+İki sahne türü desteklenir:
+  - scene_XXX.png (AI görsel): SÜREKLİ hareket eden Ken Burns animasyonu
+    (zoom-in/zoom-out + pan) uygulanır - klip boyunca asla sabit kalmaz.
+  - scene_XXX.mp4 (Pexels stok video): orijinal hareketi korunur, klip
+    süresine göre trim/loop edilir (kendi hareketi zaten var, ayrıca
+    Ken Burns uygulanmaz).
+Her iki türde de animasyon/geçiş stili art arda gelen klipler arasında
+TEKRARLANMAZ.
 
 Ekstra bindirmeler:
 - VURGU KARTI (sağ üst): çarpıcı bir sayı/istatistik geçtiğinde kısa
@@ -63,6 +68,22 @@ def split_into_scenes(script_text: str):
     for i in range(0, len(paragraphs), group_size):
         merged.append("\n\n".join(paragraphs[i:i + group_size]))
     return merged
+
+
+def gather_scene_files(scenes_dir: str):
+    """scene_XXX.png ve scene_XXX.mp4 dosyalarını birlikte, sıra
+    numarasına göre sıralanmış olarak döndürür."""
+    files = (
+        glob.glob(os.path.join(scenes_dir, "scene_*.png"))
+        + glob.glob(os.path.join(scenes_dir, "scene_*.mp4"))
+    )
+
+    def scene_index(path):
+        base = os.path.basename(path)
+        num_part = base.split("_", 1)[1].split(".")[0]
+        return int(num_part)
+
+    return sorted(files, key=scene_index)
 
 
 def extract_overlays(client, scenes):
@@ -128,17 +149,8 @@ def build_zoompan_expr(style: str, frames: int):
     return z_expr, x_expr, y_expr
 
 
-def make_ken_burns_clip(image_path: str, duration: float, callout_text: str,
-                         info_card_text: str, style: str, out_path: str):
-    frames = int(duration * FPS)
-    z_expr, x_expr, y_expr = build_zoompan_expr(style, frames)
-
-    vf_chain = (
-        f"scale=1920:-1,"
-        f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
-        f"d={frames}:s={RESOLUTION}:fps={FPS}"
-    )
-
+def overlay_vf_chain(vf_chain: str, callout_text: str, info_card_text: str,
+                      duration: float, out_path: str) -> str:
     def fade_alpha_expr(show_dur):
         return (
             f"if(lt(t,0.25),t/0.25,"
@@ -168,12 +180,54 @@ def make_ken_burns_clip(image_path: str, duration: float, callout_text: str,
             f"boxborderw=14:x=50:y=50:alpha='{fade_alpha_expr(show_dur)}'"
         )
 
+    return vf_chain
+
+
+def make_ken_burns_clip(image_path: str, duration: float, callout_text: str,
+                         info_card_text: str, style: str, out_path: str):
+    frames = int(duration * FPS)
+    z_expr, x_expr, y_expr = build_zoompan_expr(style, frames)
+
+    vf_chain = (
+        f"scale=1920:-1,"
+        f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
+        f"d={frames}:s={RESOLUTION}:fps={FPS}"
+    )
+    vf_chain = overlay_vf_chain(vf_chain, callout_text, info_card_text, duration, out_path)
+
     subprocess.run(
         [
             "ffmpeg", "-y",
             "-loop", "1", "-i", image_path,
             "-vf", vf_chain,
             "-t", str(duration),
+            "-pix_fmt", "yuv420p",
+            out_path,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def make_stock_video_clip(video_path: str, duration: float, callout_text: str,
+                           info_card_text: str, out_path: str):
+    """Stok video klibini hedef çözünürlüğe kırpar/ölçekler, gerekirse
+    döngüye alarak (loop) tam olarak `duration` saniyeye sabitler.
+    Kendi doğal hareketi olduğu için Ken Burns uygulanmaz."""
+    w, h = RESOLUTION.split("x")
+    vf_chain = (
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h},setsar=1,fps={FPS}"
+    )
+    vf_chain = overlay_vf_chain(vf_chain, callout_text, info_card_text, duration, out_path)
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1", "-i", video_path,
+            "-vf", vf_chain,
+            "-t", str(duration),
+            "-an",
             "-pix_fmt", "yuv420p",
             out_path,
         ],
@@ -269,9 +323,9 @@ def main():
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
-    scene_files = sorted(glob.glob(os.path.join(args.scenes, "scene_*.png")))
+    scene_files = gather_scene_files(args.scenes)
     if not scene_files:
-        raise SystemExit("scenes/ klasöründe görsel bulunamadı")
+        raise SystemExit("scenes/ klasöründe görsel/video bulunamadı")
 
     with open(args.script, "r", encoding="utf-8") as f:
         script_text = f.read()
@@ -290,23 +344,37 @@ def main():
 
     clip_paths = []
     last_style = None
+    stock_count = 0
+    ai_count = 0
+
     for i, scene_file in enumerate(scene_files):
         clip_path = f"clip_{i:03d}.mp4"
         callout = overlays[i]["callout"] if i < len(overlays) else ""
         info_card = overlays[i]["info_card"] if i < len(overlays) else ""
 
-        style_choices = [s for s in ANIMATION_STYLES if s != last_style]
-        style = random.choice(style_choices)
-        last_style = style
+        is_stock_video = scene_file.lower().endswith(".mp4")
 
-        make_ken_burns_clip(scene_file, clip_len, callout, info_card, style, clip_path)
+        if is_stock_video:
+            make_stock_video_clip(scene_file, clip_len, callout, info_card, clip_path)
+            stock_count += 1
+            style_label = "stok video (doğal hareket)"
+        else:
+            style_choices = [s for s in ANIMATION_STYLES if s != last_style]
+            style = random.choice(style_choices)
+            last_style = style
+            make_ken_burns_clip(scene_file, clip_len, callout, info_card, style, clip_path)
+            ai_count += 1
+            style_label = f"animasyon:{style}"
+
         clip_paths.append(clip_path)
-        tags = [f"animasyon:{style}"]
+        tags = [style_label]
         if callout:
             tags.append(f"vurgu:'{callout}'")
         if info_card:
             tags.append(f"bilgi:'{info_card}'")
         print(f"  Klip {i+1}/{n} hazır ({', '.join(tags)})")
+
+    print(f"({stock_count} stok video klip, {ai_count} AI görsel klip)")
 
     silent_video = "silent_video.mp4"
     chain_with_xfade(clip_paths, clip_len, silent_video)
