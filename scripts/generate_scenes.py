@@ -6,20 +6,32 @@ ATMOSFERİK mi yoksa script'e ÖZGÜ/BENZERSİZ bir an mı olduğunu sorar:
     (ör. klavye yazan eller, sunucu odası, retro konsol genel çekimi).
     Bulunursa scene_XXX.mp4 olarak kaydedilir.
   - ÖZGÜ/BENZERSİZ sahneler (script'in tam olarak bahsettiği tek bir
-    nesne/an) veya Pexels'te uygun sonuç bulunamazsa -> AI görsel
-    üretimine (Wiro, openai/gpt-image-2) düşülür, scene_XXX.png olarak
-    kaydedilir.
+    nesne/an) veya Pexels'te uygun sonuç bulunamazsa -> önce GÖRSEL
+    KÜTÜPHANESİNDE (assets/scene_library/) benzer etiketli bir görsel
+    aranır (maliyet tasarrufu); bulunamazsa AI görsel üretimine (Wiro,
+    openai/gpt-image-2) düşülür ve üretilen görsel gelecekte tekrar
+    kullanılabilmesi için kütüphaneye eklenir.
 
 assemble_video.py hem .png (Ken Burns animasyonu) hem .mp4 (stok video,
 trim/loop) sahneleri birlikte işleyebiliyor.
+
+ÖNEMLİ: assets/scene_library/index.json ve içindeki görseller, bu
+script çalıştıktan SONRA workflow'un "Save topic history" adımında
+repoya commit edilmeli ki bir sonraki çalıştırmada da kullanılabilsin.
+
+Claude API çağrıları geçici hatalara (500, rate limit, bağlantı
+kopması) karşı otomatik olarak yeniden dener (bkz. call_claude).
 
 Kullanım:
     python scripts/generate_scenes.py --script script.md --out scenes/
 """
 import argparse
+import hashlib
 import json
 import os
 import random
+import shutil
+import time
 
 import anthropic
 import requests
@@ -36,6 +48,43 @@ MAX_SCENES = 20
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 
+SCENE_LIBRARY_DIR = "assets/scene_library"
+SCENE_LIBRARY_INDEX = os.path.join(SCENE_LIBRARY_DIR, "index.json")
+MIN_TAG_OVERLAP = 2  # en az bu kadar ortak etiket varsa "benzer" say
+
+MAX_RETRIES = 4
+RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
+
+RETRYABLE_EXCEPTIONS = (
+    anthropic.APIConnectionError,
+    anthropic.APITimeoutError,
+    anthropic.InternalServerError,
+    anthropic.RateLimitError,
+)
+
+
+def call_claude(client, prompt, model=MODEL, max_tokens=300):
+    """Claude'a istek atar; geçici hatalarda (500/rate limit/bağlantı)
+    üstel bekleme ile otomatik olarak yeniden dener."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return "".join(b.text for b in response.content if b.type == "text")
+        except RETRYABLE_EXCEPTIONS as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"  UYARI: Claude API geçici hata ({type(e).__name__}), "
+                      f"{delay}sn sonra tekrar deneniyor "
+                      f"(deneme {attempt + 1}/{MAX_RETRIES})...")
+                time.sleep(delay)
+    raise last_error
+
 
 def split_into_scenes(script_text: str):
     paragraphs = [p.strip() for p in script_text.split("\n\n") if p.strip()]
@@ -51,8 +100,9 @@ def split_into_scenes(script_text: str):
 
 def plan_scene(client, narration_paragraph: str) -> dict:
     """
-    Sahne için hem stok video arama sorgusu hem AI görsel tarifi hem de
-    "bu sahne stok video için uygun mu" kararını tek çağrıda üretir.
+    Sahne için stok video arama sorgusu, AI görsel tarifi, "stok video
+    için uygun mu" kararı VE görsel kütüphanesinde eşleşme aramak için
+    jenerik etiketleri tek çağrıda üretir.
     """
     prompt = f"""Aşağıdaki YouTube anlatım paragrafı için bir sahne planı
 üret.
@@ -72,22 +122,23 @@ script'e özgü, somut bir detay varsa use_stock: false yap.
    arama sorgusu (ör. "server room lights", "retro game console",
    "typing keyboard close up"). Marka/gerçek kişi/oyun adı KULLANMA.
 3. "visual_prompt": AI görsel üretimi için İngilizce, 1-2 cümlelik
-   sahne tarifi (use_stock false ise ya da stok bulunamazsa
-   kullanılacak yedek). Gerçek kişi/marka/oyun adı kullanma, insan
-   yüzünü minimize et (silüet/arkadan çekim/eller tercih et), şiddet/
-   silah/kan içerme.
+   sahne tarifi (use_stock false ise, stok bulunamazsa, ya da
+   kütüphanede eşleşme yoksa kullanılacak yedek). Gerçek kişi/marka/
+   oyun adı kullanma, insan yüzünü minimize et (silüet/arkadan çekim/
+   eller tercih et), şiddet/silah/kan içerme.
+4. "tags": 3-6 adet İngilizce, JENERİK, tekil kelime/kısa öbeklerden
+   oluşan bir liste - bu görsel BAŞKA bir videoda da benzer bir sahne
+   gerektiğinde eşleştirme için kullanılacak (ör. ["server room",
+   "blue lighting", "cables", "dark atmosphere"]). Marka/oyun adı
+   KULLANMA, sadece görselin genel içeriğini/atmosferini tarif eden
+   jenerik kelimeler kullan.
 
 ANLATIM PARAGRAFI:
 {narration_paragraph}
 
-Çıktı SADECE JSON: {{"use_stock": true, "stock_query": "...", "visual_prompt": "..."}}"""
+Çıktı SADECE JSON: {{"use_stock": true, "stock_query": "...", "visual_prompt": "...", "tags": ["...", "..."]}}"""
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=250,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = "".join(b.text for b in response.content if b.type == "text")
+    raw = call_claude(client, prompt)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(cleaned)
@@ -97,7 +148,64 @@ ANLATIM PARAGRAFI:
             "stock_query": "",
             "visual_prompt": "a moody abstract technology visualization, "
                               "no people, no text",
+            "tags": [],
         }
+
+
+def load_library() -> list:
+    if not os.path.exists(SCENE_LIBRARY_INDEX):
+        return []
+    try:
+        with open(SCENE_LIBRARY_INDEX, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_library(library: list):
+    os.makedirs(SCENE_LIBRARY_DIR, exist_ok=True)
+    with open(SCENE_LIBRARY_INDEX, "w", encoding="utf-8") as f:
+        json.dump(library, f, ensure_ascii=False, indent=2)
+
+
+def find_reusable_image(library: list, tags: list):
+    """Etiket kümesi en çok örtüşen kütüphane kaydını döndürür (eşik
+    üzerindeyse). Bulamazsa None döner."""
+    if not tags:
+        return None
+
+    tags_set = {t.lower().strip() for t in tags}
+    best_entry = None
+    best_overlap = 0
+
+    for entry in library:
+        entry_tags = {t.lower().strip() for t in entry.get("tags", [])}
+        overlap = len(tags_set & entry_tags)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_entry = entry
+
+    if best_entry and best_overlap >= MIN_TAG_OVERLAP:
+        return best_entry
+    return None
+
+
+def add_to_library(library: list, tags: list, image_path: str):
+    """Üretilen görseli kütüphaneye (kalıcı klasöre) kopyalar ve
+    index'e etiketleriyle birlikte kaydeder."""
+    if not tags:
+        return
+
+    os.makedirs(SCENE_LIBRARY_DIR, exist_ok=True)
+    with open(image_path, "rb") as f:
+        content_hash = hashlib.sha1(f.read()).hexdigest()[:12]
+    stored_path = os.path.join(SCENE_LIBRARY_DIR, f"{content_hash}.png")
+
+    if not os.path.exists(stored_path):
+        shutil.copyfile(image_path, stored_path)
+
+    library.append({"tags": tags, "file": stored_path})
+    save_library(library)
 
 
 def search_pexels_video(query: str, api_key: str, out_path: str) -> bool:
@@ -202,9 +310,11 @@ def main():
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     pexels_key = os.environ.get("PEXELS_API_KEY", "")
     scenes = split_into_scenes(script_text)
+    library = load_library()
 
     stock_count = 0
     ai_count = 0
+    reused_count = 0
 
     for i, scene_text in enumerate(scenes, start=1):
         plan = plan_scene(client, scene_text)
@@ -220,11 +330,23 @@ def main():
 
         if not got_stock:
             png_path = os.path.join(args.out, f"scene_{i:03d}.png")
-            generate_image_with_fallback(client, plan.get("visual_prompt", ""), png_path)
-            ai_count += 1
-            print(f"Sahne {i}/{len(scenes)}: AI görsel -> {png_path}")
+            tags = plan.get("tags", [])
+            reusable = find_reusable_image(library, tags)
 
-    print(f"\nToplam: {stock_count} stok video, {ai_count} AI görsel "
+            if reusable and os.path.exists(reusable["file"]):
+                shutil.copyfile(reusable["file"], png_path)
+                reused_count += 1
+                print(f"Sahne {i}/{len(scenes)}: KÜTÜPHANEDEN yeniden kullanıldı "
+                      f"-> {png_path} (eşleşen etiketler: {tags})")
+            else:
+                generate_image_with_fallback(client, plan.get("visual_prompt", ""), png_path)
+                add_to_library(library, tags, png_path)
+                ai_count += 1
+                print(f"Sahne {i}/{len(scenes)}: AI görsel (yeni, kütüphaneye "
+                      f"eklendi) -> {png_path}")
+
+    print(f"\nToplam: {stock_count} stok video, {ai_count} yeni AI görsel, "
+          f"{reused_count} kütüphaneden yeniden kullanıldı "
           f"({len(scenes)} sahne)")
 
 
