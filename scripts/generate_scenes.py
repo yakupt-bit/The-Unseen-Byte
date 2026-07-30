@@ -45,7 +45,7 @@ STYLE_GUIDE = (
 
 MODEL = "claude-sonnet-4-6"
 MODEL_UTILITY = "claude-haiku-4-5-20251001"
-MAX_SCENES = 20
+MAX_SCENES = 60  # daha kısa klipler = daha hareketli, daha az monoton video
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 
@@ -213,8 +213,15 @@ def add_to_library(library: list, tags: list, image_path: str):
     save_library(library)
 
 
-def search_pexels_video(query: str, api_key: str, out_path: str) -> bool:
-    """Pexels'te sorguyu arar, ilk uygun klibi indirir. Bulamazsa False döner."""
+def search_pexels_video(query: str, api_key: str, out_path: str,
+                         used_video_ids: set) -> bool:
+    """
+    Pexels'te sorguyu arar. Aynı video (çalıştırma) içinde DAHA ÖNCE
+    kullanılmış bir klip KESİNLİKLE tekrar seçilmez - ilk 15 sonuç
+    arasında henüz kullanılmamış olanı bulur. Hiçbiri uygun/kullanılmamış
+    değilse False döner (bu durumda çağıran taraf AI görsel üretimine
+    düşer, asla tekrar kullanılmış bir stok klip döndürülmez).
+    """
     if not api_key or not query:
         return False
 
@@ -222,7 +229,7 @@ def search_pexels_video(query: str, api_key: str, out_path: str) -> bool:
         resp = requests.get(
             PEXELS_SEARCH_URL,
             headers={"Authorization": api_key},
-            params={"query": query, "per_page": 5, "orientation": "landscape"},
+            params={"query": query, "per_page": 15, "orientation": "landscape"},
             timeout=20,
         )
         resp.raise_for_status()
@@ -230,24 +237,44 @@ def search_pexels_video(query: str, api_key: str, out_path: str) -> bool:
         if not results:
             return False
 
-        video = results[0]
-        candidates = [
-            f for f in video.get("video_files", [])
-            if f.get("file_type") == "video/mp4" and f.get("width")
-        ]
-        if not candidates:
+        def extract_best_file(video):
+            candidates = [
+                f for f in video.get("video_files", [])
+                if f.get("file_type") == "video/mp4" and f.get("width")
+            ]
+            if not candidates:
+                return None
+            # Gereksiz yere çok büyük dosya indirmemek için 1280
+            # genişliğine en yakın (ama altına düşmeyen) dosyayı tercih et.
+            candidates.sort(key=lambda f: (f["width"] < 1280, abs(f["width"] - 1280)))
+            return candidates[0]
+
+        # Kullanılmamış VE geçerli dosyası olan ilk 5 sonucu topla,
+        # aralarından RASTGELE birini seç (hep aynı/ilk sonucu almasın).
+        eligible = []
+        for video in results:
+            if video.get("id") in used_video_ids:
+                continue
+            best_file = extract_best_file(video)
+            if best_file:
+                eligible.append((video, best_file))
+            if len(eligible) >= 5:
+                break
+
+        if not eligible:
+            # 15 sonuç arasında kullanılmamış uygun klip yok - tekrar
+            # seçmek yerine AI görsele düşülsün diye False dön.
             return False
 
-        # Gereksiz yere çok büyük dosya indirmemek için 1280 genişliğine
-        # en yakın (ama altına düşmeyen) dosyayı tercih et.
-        candidates.sort(key=lambda f: (f["width"] < 1280, abs(f["width"] - 1280)))
-        best = candidates[0]
+        chosen_video, chosen_file = random.choice(eligible)
 
-        video_resp = requests.get(best["link"], stream=True, timeout=60)
+        video_resp = requests.get(chosen_file["link"], stream=True, timeout=60)
         video_resp.raise_for_status()
         with open(out_path, "wb") as f:
             for chunk in video_resp.iter_content(chunk_size=1 << 16):
                 f.write(chunk)
+
+        used_video_ids.add(chosen_video.get("id"))
         return True
 
     except (requests.RequestException, KeyError, IndexError):
@@ -316,6 +343,7 @@ def main():
     pexels_key = os.environ.get("PEXELS_API_KEY", "")
     scenes = split_into_scenes(script_text)
     library = load_library()
+    used_video_ids = set()  # aynı çalıştırma içinde tekrar klip seçilmesin
 
     stock_count = 0
     ai_count = 0
@@ -327,7 +355,8 @@ def main():
         got_stock = False
         if plan.get("use_stock"):
             mp4_path = os.path.join(args.out, f"scene_{i:03d}.mp4")
-            got_stock = search_pexels_video(plan.get("stock_query", ""), pexels_key, mp4_path)
+            got_stock = search_pexels_video(plan.get("stock_query", ""), pexels_key,
+                                             mp4_path, used_video_ids)
             if got_stock:
                 stock_count += 1
                 print(f"Sahne {i}/{len(scenes)}: STOK video -> {mp4_path} "
