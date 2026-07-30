@@ -65,7 +65,7 @@ jobs:
           TEST_FLAG: ${{ github.event.inputs.test_mode == 'true' && '--test' || '' }}
         run: python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
 
-      - name: 4) Generate title (curiosity-gap: thumbnail asks, title develops)
+      - name: "4) Generate title (curiosity-gap: thumbnail asks, title develops)"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/generate_titles.py --script script.md --out titles.json
