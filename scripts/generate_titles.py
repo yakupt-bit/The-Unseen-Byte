@@ -9,12 +9,16 @@ gerektiriyor. Kanal bu eşiklere ulaşana kadar tek başlık üretmek daha
 mantıklı - bu yüzden A/B akışı kaldırıldı, sistem artık doğrudan en
 güçlü tek başlığı seçip kullanıyor.
 
+Her Claude API çağrısı geçici hatalara (500, rate limit, bağlantı
+kopması) karşı otomatik olarak yeniden dener (bkz. call_claude).
+
 Kullanım:
     python scripts/generate_titles.py --script script.md --out titles.json
 """
 import argparse
 import json
 import os
+import time
 
 import anthropic
 
@@ -22,14 +26,38 @@ MODEL_CREATIVE = "claude-sonnet-4-6"
 MODEL_UTILITY = "claude-haiku-4-5-20251001"
 BRAND_SUFFIX = " | The Unseen Byte"
 
+MAX_RETRIES = 4
+RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
+
+RETRYABLE_EXCEPTIONS = (
+    anthropic.APIConnectionError,
+    anthropic.APITimeoutError,
+    anthropic.InternalServerError,
+    anthropic.RateLimitError,
+)
+
 
 def call_claude(client, prompt, model, max_tokens=800):
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return "".join(b.text for b in response.content if b.type == "text")
+    """Claude'a istek atar; geçici hatalarda (500/rate limit/bağlantı)
+    üstel bekleme ile otomatik olarak yeniden dener."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return "".join(b.text for b in response.content if b.type == "text")
+        except RETRYABLE_EXCEPTIONS as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"  UYARI: Claude API geçici hata ({type(e).__name__}), "
+                      f"{delay}sn sonra tekrar deneniyor "
+                      f"(deneme {attempt + 1}/{MAX_RETRIES})...")
+                time.sleep(delay)
+    raise last_error
 
 
 def main():
