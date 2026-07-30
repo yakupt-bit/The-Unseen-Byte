@@ -118,11 +118,12 @@ jobs:
           python scripts/upload_youtube.py --video output/final.mp4 \
             --titles titles.json --thumbnail output/thumbnails/thumbnail_1.png
 
-      - name: 12) Save topic history (prevent future repeats)
+      - name: 12) Save topic history and scene library (prevent future repeats, reuse images)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           touch used_topics.json
-          git add used_topics.json
-          git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history"
+          mkdir -p assets/scene_library
+          git add used_topics.json assets/scene_library/
+          git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
           git push
