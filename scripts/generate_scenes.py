@@ -44,6 +44,7 @@ STYLE_GUIDE = (
 )
 
 MODEL = "claude-sonnet-4-6"
+MODEL_UTILITY = "claude-haiku-4-5-20251001"
 MAX_SCENES = 20
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
@@ -138,7 +139,11 @@ ANLATIM PARAGRAFI:
 
 Çıktı SADECE JSON: {{"use_stock": true, "stock_query": "...", "visual_prompt": "...", "tags": ["...", "..."]}}"""
 
-    raw = call_claude(client, prompt)
+    # NOT: Bu basit bir sınıflandırma/etiketleme işi, video başına 15-20
+    # kez tekrarlandığı için ucuz modelle (Haiku) yapılıyor - Sonnet'e
+    # göre çok daha düşük maliyetli, kalite kaybı bu iş için ihmal
+    # edilebilir düzeyde.
+    raw = call_claude(client, prompt, model=MODEL_UTILITY)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(cleaned)
