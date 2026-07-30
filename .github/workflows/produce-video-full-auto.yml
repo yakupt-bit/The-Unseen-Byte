@@ -4,11 +4,18 @@ name: Produce Video (fully automated)
 # -> seslendirme -> altyazı -> sahne görselleri -> kapak -> render ->
 # müzik miksajı -> altyazı gömme.
 #
-# Zamanlama SADECE cron-job.org üzerinden yönetiliyor (Pazartesi/
-# Çarşamba/Cuma, 12:00 Türkiye saati - pipeline'a tampon süre vermek
-# için). GitHub'ın kendi dahili "schedule" tetikleyicisi BİLEREK yok.
+# Zamanlama SADECE cron-job.org üzerinden yönetiliyor (hafta içi her
+# gün, 11:00 Türkiye saati - pipeline'a tampon süre vermek için).
+# GitHub'ın kendi dahili "schedule" tetikleyicisi BİLEREK yok.
 # Video ise upload_youtube.py sayesinde YouTube'un kendi zamanlı
-# yayın özelliğiyle tam 17:00 TR'de otomatik yayına giriyor.
+# yayın özelliğiyle tam 17:00 TR'de otomatik yayına giriyor (ya da
+# pipeline 17:00'i geçtikten sonra biterse hemen herkese açık olarak
+# yayınlanıyor).
+#
+# GÜVENLİK AĞI: Herhangi bir adımda hata olsa bile (bkz. en alttaki
+# "Save partial outputs" adımı), o ana kadar üretilen her şey
+# (script, sesler, sahneler, kısmi video) Artifacts olarak kaydedilir,
+# hiçbir şey boşa gitmez.
 
 on:
   workflow_dispatch:
@@ -24,7 +31,7 @@ on:
         default: false
 
 permissions:
-  contents: write   # used_topics.json'ı repoya geri commit edebilmek için
+  contents: write   # used_topics.json ve scene library'yi repoya geri commit edebilmek için
 
 jobs:
   produce:
@@ -58,7 +65,7 @@ jobs:
           TEST_FLAG: ${{ github.event.inputs.test_mode == 'true' && '--test' || '' }}
         run: python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
 
-      - name: 4) Generate 3 title variants (for YouTube native A/B test)
+      - name: 4) Generate title (curiosity-gap: thumbnail asks, title develops)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/generate_titles.py --script script.md --out titles.json
@@ -83,9 +90,10 @@ jobs:
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/generate_scenes.py --script script.md --out scenes/
-        
-      - name: 8) 3 thumbnail variants (Wiro reve/generate)
+
+      - name: 8) Thumbnail (Wiro reve/generate)
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
         run: python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
 
@@ -127,3 +135,19 @@ jobs:
           git add used_topics.json assets/scene_library/
           git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
           git push
+
+      - name: Save partial outputs (runs even if an earlier step failed)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: partial-outputs-run-${{ github.run_number }}
+          path: |
+            trend.json
+            facts.json
+            script.md
+            titles.json
+            audio/
+            scenes/
+            output/
+          if-no-files-found: ignore
+          retention-days: 14
