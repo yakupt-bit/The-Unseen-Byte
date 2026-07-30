@@ -20,6 +20,9 @@ Ekstra bindirmeler:
 - KÖŞE LOGOSU (sol ÜST, köşeye yakın ama tam köşede değil): video
   boyunca kalıcı, hafif saydam kanal logosu.
 
+Claude API çağrısı geçici hatalara (500, rate limit, bağlantı kopması)
+karşı otomatik olarak yeniden dener (bkz. call_claude).
+
 Kullanım:
     python scripts/assemble_video.py --audio audio/final_mix.mp3 \
         --scenes scenes/ --script script.md --out output/raw.mp4
@@ -30,6 +33,7 @@ import json
 import os
 import random
 import subprocess
+import time
 
 import anthropic
 from mutagen.mp3 import MP3
@@ -40,6 +44,16 @@ XFADE_DURATION = 0.6
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 LOGO_PATH = "assets/branding/logo.png"
 MAX_SCENES = 20
+
+MAX_RETRIES = 4
+RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
+
+RETRYABLE_EXCEPTIONS = (
+    anthropic.APIConnectionError,
+    anthropic.APITimeoutError,
+    anthropic.InternalServerError,
+    anthropic.RateLimitError,
+)
 
 TRANSITIONS = [
     "fade", "wipeleft", "wiperight", "wipeup", "wipedown",
@@ -52,6 +66,29 @@ ANIMATION_STYLES = [
     "zoom_in_left", "zoom_in_right", "zoom_in_up", "zoom_in_down",
     "zoom_out_left", "zoom_out_right", "zoom_out_up", "zoom_out_down",
 ]
+
+
+def call_claude(client, prompt, model="claude-haiku-4-5-20251001", max_tokens=800):
+    """Claude'a istek atar; geçici hatalarda (500/rate limit/bağlantı)
+    üstel bekleme ile otomatik olarak yeniden dener."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return "".join(b.text for b in response.content if b.type == "text")
+        except RETRYABLE_EXCEPTIONS as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"  UYARI: Claude API geçici hata ({type(e).__name__}), "
+                      f"{delay}sn sonra tekrar deneniyor "
+                      f"(deneme {attempt + 1}/{MAX_RETRIES})...")
+                time.sleep(delay)
+    raise last_error
 
 
 def get_audio_duration(path: str) -> float:
@@ -104,12 +141,7 @@ PARAGRAFLAR:
 Çıktı SADECE JSON dizi (paragraf sırasıyla, İngilizce metinlerle):
 [{{"callout": "27%", "info_card": ""}}, {{"callout": "", "info_card": "ESRB: video game content rating organization"}}, ...]"""
 
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=800,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = "".join(b.text for b in response.content if b.type == "text")
+    raw = call_claude(client, prompt)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     try:
         overlays = json.loads(cleaned)
