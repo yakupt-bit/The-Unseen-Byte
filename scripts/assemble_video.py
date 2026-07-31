@@ -43,7 +43,7 @@ RESOLUTION = "1280x720"
 XFADE_DURATION = 0.6
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 LOGO_PATH = "assets/branding/logo.png"
-MAX_SCENES = 20
+MAX_SCENES = 60  # generate_scenes.py ile aynı olmalı
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
