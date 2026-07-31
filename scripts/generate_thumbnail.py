@@ -45,16 +45,26 @@ RETRYABLE_EXCEPTIONS = (
 )
 
 THUMBNAIL_STYLE = (
-    "bold high-contrast digital illustration, dramatic lighting, "
-    "single clear focal point, vivid saturated colors (red/yellow/dark "
-    "accents work well), tech/gaming aesthetic, leaves empty space in "
-    "one corner for text overlay, no existing text in the image, 16:9, "
-    "composed so a viewer's eye is immediately drawn to one specific "
-    "detail"
+    "dramatic mystery-documentary YouTube thumbnail aesthetic, bold "
+    "high-contrast lighting, strong single subject that fills a "
+    "significant portion of the frame, cinematic reveal-moment "
+    "composition, rich saturated color grading (deep reds, blacks, "
+    "warm ambers, or cold dramatic blues work well), sharp and "
+    "eye-catching even at small size, tech/gaming themed, leaves clear "
+    "empty space in one area for text overlay, no existing text in the "
+    "image, 16:9"
 )
+
+ANNOTATION_PROBABILITY = 0.35  # ok/daire her kapakta DEĞİL, ~%35 ihtimalle
 
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 ANNOTATION_COLOR = (235, 45, 45)
+
+TEXT_COLOR_PALETTE = [
+    (255, 255, 255),  # beyaz - klasik, her zaman okunaklı
+    (255, 214, 0),    # sarı - dikkat çekici, gizem/uyarı hissi
+    (255, 59, 48),    # kırmızı - dramatik, acil/şok hissi
+]
 
 
 def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
@@ -187,7 +197,12 @@ def overlay_text(image_path: str, hook_text: str, out_path: str):
     img = Image.open(image_path).convert("RGB")
     draw = ImageDraw.Draw(img, "RGBA")
 
-    draw_annotation(draw, img.width, img.height)
+    # Ok/daire vurgusu ARTIK HER KAPAKTA değil - NYGMA tarzı referanslarda
+    # olduğu gibi çoğu kapak sadece güçlü görsel + metinle çalışıyor,
+    # ok/daire sadece arada bir (ANNOTATION_PROBABILITY ihtimalle) ek bir
+    # vurgu olarak kullanılıyor.
+    if random.random() < ANNOTATION_PROBABILITY:
+        draw_annotation(draw, img.width, img.height)
 
     max_text_width = int(img.width * 0.92)
     max_text_height = int(img.height * 0.38)
@@ -230,7 +245,8 @@ def overlay_text(image_path: str, hook_text: str, out_path: str):
         for dy in (-3, -1, 0, 1, 3):
             draw.multiline_text((x + dx, y + dy), wrapped, font=font,
                                  fill=(0, 0, 0, 255), spacing=10)
-    draw.multiline_text((x, y), wrapped, font=font, fill=(255, 255, 255, 255), spacing=10)
+    text_color = random.choice(TEXT_COLOR_PALETTE)
+    draw.multiline_text((x, y), wrapped, font=font, fill=(*text_color, 255), spacing=10)
 
     img.save(out_path)
 
