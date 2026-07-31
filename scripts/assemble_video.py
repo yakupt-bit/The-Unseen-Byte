@@ -32,6 +32,7 @@ import glob
 import json
 import os
 import random
+import re
 import subprocess
 import time
 
@@ -96,14 +97,22 @@ def get_audio_duration(path: str) -> float:
 
 
 def split_into_scenes(script_text: str):
-    paragraphs = [p.strip() for p in script_text.split("\n\n") if p.strip()]
-    if len(paragraphs) <= MAX_SCENES:
-        return paragraphs
+    """
+    generate_scenes.py ile BİREBİR AYNI mantık (cümle bazlı bölme) -
+    aksi halde sahne sayısı iki dosya arasında uyumsuz olur ve overlay/
+    klip eşleşmesi bozulur."""
+    normalized = re.sub(r"\n{2,}", " ", script_text).strip()
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", normalized) if s.strip()]
+
+    if not sentences:
+        return [script_text.strip()] if script_text.strip() else []
+    if len(sentences) <= MAX_SCENES:
+        return sentences
 
     merged = []
-    group_size = -(-len(paragraphs) // MAX_SCENES)
-    for i in range(0, len(paragraphs), group_size):
-        merged.append("\n\n".join(paragraphs[i:i + group_size]))
+    group_size = -(-len(sentences) // MAX_SCENES)
+    for i in range(0, len(sentences), group_size):
+        merged.append(" ".join(sentences[i:i + group_size]))
     return merged
 
 
