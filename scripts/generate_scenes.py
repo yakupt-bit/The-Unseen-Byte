@@ -30,11 +30,15 @@ import hashlib
 import json
 import os
 import random
+import re
 import shutil
+import subprocess
+import tempfile
 import time
 
 import anthropic
 import requests
+from mutagen.mp3 import MP3
 
 from wiro_client import run_model, download_output
 
@@ -56,12 +60,34 @@ MIN_TAG_OVERLAP = 2  # en az bu kadar ortak etiket varsa "benzer" say
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
 
+MIN_STOCK_DURATION_RATIO = 0.7  # kaynak klip, hedef süresinin en az bu oranı kadar olmalı
+
 RETRYABLE_EXCEPTIONS = (
     anthropic.APIConnectionError,
     anthropic.APITimeoutError,
     anthropic.InternalServerError,
     anthropic.RateLimitError,
 )
+
+
+def estimate_target_clip_length(scene_count: int) -> float | None:
+    """
+    audio/final_mix.mp3 (6. adımda üretilir, bu script 7. adımda çalışır,
+    yani dosya zaten hazırdır) süresini okuyup sahne sayısına bölerek
+    HER klibin yaklaşık ne kadar süreceğini tahmin eder. Bu tahmin,
+    Pexels'ten SEÇERKEN çok kısa (döngüye girip tekrar tekrar oynayacak)
+    klipleri elemek için kullanılır - amaç, tek bir sahnenin kendi
+    içinde aynı birkaç saniyelik görüntünün defalarca tekrarlanmasını
+    önlemek.
+    """
+    audio_path = "audio/final_mix.mp3"
+    if not os.path.exists(audio_path) or scene_count <= 0:
+        return None
+    try:
+        duration = MP3(audio_path).info.length
+        return duration / scene_count
+    except Exception:
+        return None
 
 
 def call_claude(client, prompt, model=MODEL, max_tokens=300):
@@ -88,14 +114,26 @@ def call_claude(client, prompt, model=MODEL, max_tokens=300):
 
 
 def split_into_scenes(script_text: str):
-    paragraphs = [p.strip() for p in script_text.split("\n\n") if p.strip()]
-    if len(paragraphs) <= MAX_SCENES:
-        return paragraphs
+    """
+    Script'i CÜMLE bazlı böler (paragraf bazlı değil) - böylece sahne
+    sayısı gerçekten MAX_SCENES'e yaklaşır. Eskiden paragraf sayısı
+    kadar sahne çıkıyordu (ör. 33 paragraf -> sadece 33 sahne), MAX_SCENES
+    sadece üst sınırdı, hedef değildi. Artık script'teki toplam cümle
+    sayısı MAX_SCENES'e bölünüyor, bu da çok daha kısa/hareketli klipler
+    ve MAX_SCENES'e yakın bir sahne sayısı demek.
+    """
+    normalized = re.sub(r"\n{2,}", " ", script_text).strip()
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", normalized) if s.strip()]
+
+    if not sentences:
+        return [script_text.strip()] if script_text.strip() else []
+    if len(sentences) <= MAX_SCENES:
+        return sentences
 
     merged = []
-    group_size = -(-len(paragraphs) // MAX_SCENES)
-    for i in range(0, len(paragraphs), group_size):
-        merged.append("\n\n".join(paragraphs[i:i + group_size]))
+    group_size = -(-len(sentences) // MAX_SCENES)
+    for i in range(0, len(sentences), group_size):
+        merged.append(" ".join(sentences[i:i + group_size]))
     return merged
 
 
@@ -213,14 +251,64 @@ def add_to_library(library: list, tags: list, image_path: str):
     save_library(library)
 
 
+def concat_clips(clip_paths: list, out_path: str) -> bool:
+    """
+    Birden fazla stok klibi (farklı çözünürlük/fps olabilir) tek bir
+    videoda birleştirir. Amaç: tek bir kısa klibi döngüye sokup aynı
+    görüntüyü tekrar tekrar oynatmak yerine, FARKLI klipleri art arda
+    göstererek hedef süreyi doldurmak. Başarısız olursa False döner.
+    """
+    try:
+        inputs = []
+        for p in clip_paths:
+            inputs += ["-i", p]
+
+        filter_parts = []
+        labels = []
+        for idx in range(len(clip_paths)):
+            label = f"v{idx}"
+            filter_parts.append(
+                f"[{idx}:v]scale=1280:720:force_original_aspect_ratio=increase,"
+                f"crop=1280:720,fps=25,setsar=1[{label}]"
+            )
+            labels.append(f"[{label}]")
+        concat_expr = "".join(labels) + f"concat=n={len(clip_paths)}:v=1:a=0[outv]"
+        filter_complex = ";".join(filter_parts) + ";" + concat_expr
+
+        subprocess.run(
+            [
+                "ffmpeg", "-y", *inputs,
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                "-an",
+                "-pix_fmt", "yuv420p",
+                out_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
 def search_pexels_video(query: str, api_key: str, out_path: str,
-                         used_video_ids: set) -> bool:
+                         used_video_ids: set, target_clip_length: float | None) -> bool:
     """
     Pexels'te sorguyu arar. Aynı video (çalıştırma) içinde DAHA ÖNCE
-    kullanılmış bir klip KESİNLİKLE tekrar seçilmez - ilk 15 sonuç
-    arasında henüz kullanılmamış olanı bulur. Hiçbiri uygun/kullanılmamış
-    değilse False döner (bu durumda çağıran taraf AI görsel üretimine
-    düşer, asla tekrar kullanılmış bir stok klip döndürülmez).
+    kullanılmış bir klip KESİNLİKLE tekrar seçilmez.
+
+    ÖNEMLİ (döngü/tekrar sorunu önleme), üç kademeli strateji:
+      1. Süresi hedefin en az %70'i kadar olan TEK bir klip varsa onu
+         kullan (en temiz sonuç, döngüye hiç gerek kalmaz).
+      2. Yoksa, birden fazla FARKLI kısa klibi birleştirerek (concat)
+         hedef süreyi doldurmaya çalış - aynı görüntü değil, farklı
+         görüntüler art arda gösterilir.
+      3. O da olmazsa (nadir), en son çare olarak tek kısa klip kullanılır
+         (assemble_video.py bunu döngüye sokar - eskisi gibi).
+
+    Hiçbir uygun/kullanılmamış klip yoksa False döner (bu durumda
+    çağıran taraf AI görsel üretimine düşer).
     """
     if not api_key or not query:
         return False
@@ -244,36 +332,83 @@ def search_pexels_video(query: str, api_key: str, out_path: str,
             ]
             if not candidates:
                 return None
-            # Gereksiz yere çok büyük dosya indirmemek için 1280
-            # genişliğine en yakın (ama altına düşmeyen) dosyayı tercih et.
             candidates.sort(key=lambda f: (f["width"] < 1280, abs(f["width"] - 1280)))
             return candidates[0]
 
-        # Kullanılmamış VE geçerli dosyası olan ilk 5 sonucu topla,
-        # aralarından RASTGELE birini seç (hep aynı/ilk sonucu almasın).
-        eligible = []
-        for video in results:
-            if video.get("id") in used_video_ids:
-                continue
-            best_file = extract_best_file(video)
-            if best_file:
-                eligible.append((video, best_file))
-            if len(eligible) >= 5:
-                break
+        min_duration = target_clip_length * MIN_STOCK_DURATION_RATIO if target_clip_length else None
 
-        if not eligible:
-            # 15 sonuç arasında kullanılmamış uygun klip yok - tekrar
-            # seçmek yerine AI görsele düşülsün diye False dön.
+        def collect_eligible(require_min_duration: bool):
+            eligible = []
+            for video in results:
+                if video.get("id") in used_video_ids:
+                    continue
+                if require_min_duration and min_duration:
+                    if video.get("duration", 0) < min_duration:
+                        continue
+                best_file = extract_best_file(video)
+                if best_file:
+                    eligible.append((video, best_file))
+                if len(eligible) >= 5:
+                    break
+            return eligible
+
+        # 1) Tek başına yeterince uzun bir klip var mı?
+        eligible_long = collect_eligible(require_min_duration=True)
+        if eligible_long:
+            chosen_video, chosen_file = random.choice(eligible_long)
+            video_resp = requests.get(chosen_file["link"], stream=True, timeout=60)
+            video_resp.raise_for_status()
+            with open(out_path, "wb") as f:
+                for chunk in video_resp.iter_content(chunk_size=1 << 16):
+                    f.write(chunk)
+            used_video_ids.add(chosen_video.get("id"))
+            return True
+
+        # 2) Tek uzun klip yok - kısa klipleri BİRLEŞTİRMEYİ dene
+        eligible_short = collect_eligible(require_min_duration=False)
+        if not eligible_short:
             return False
 
-        chosen_video, chosen_file = random.choice(eligible)
+        if min_duration and len(eligible_short) > 1:
+            combo, total = [], 0.0
+            for video, file in eligible_short:
+                combo.append((video, file))
+                total += video.get("duration", 0) or 0
+                if total >= min_duration:
+                    break
 
+            if total >= min_duration and len(combo) > 1:
+                temp_paths = []
+                try:
+                    for video, file in combo:
+                        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                        tmp.close()
+                        r = requests.get(file["link"], stream=True, timeout=60)
+                        r.raise_for_status()
+                        with open(tmp.name, "wb") as f:
+                            for chunk in r.iter_content(chunk_size=1 << 16):
+                                f.write(chunk)
+                        temp_paths.append(tmp.name)
+
+                    if concat_clips(temp_paths, out_path):
+                        for video, _ in combo:
+                            used_video_ids.add(video.get("id"))
+                        return True
+                    # concat başarısız oldu, aşağıdaki tekli-klip
+                    # yedeğine düş
+                finally:
+                    for p in temp_paths:
+                        if os.path.exists(p):
+                            os.remove(p)
+
+        # 3) En son çare: tek kısa klip (döngüye girecek, ama hiç
+        # görüntü olmamasından iyidir)
+        chosen_video, chosen_file = random.choice(eligible_short)
         video_resp = requests.get(chosen_file["link"], stream=True, timeout=60)
         video_resp.raise_for_status()
         with open(out_path, "wb") as f:
             for chunk in video_resp.iter_content(chunk_size=1 << 16):
                 f.write(chunk)
-
         used_video_ids.add(chosen_video.get("id"))
         return True
 
@@ -344,6 +479,10 @@ def main():
     scenes = split_into_scenes(script_text)
     library = load_library()
     used_video_ids = set()  # aynı çalıştırma içinde tekrar klip seçilmesin
+    target_clip_length = estimate_target_clip_length(len(scenes))
+    if target_clip_length:
+        print(f"Tahmini hedef klip süresi: ~{target_clip_length:.1f}sn "
+              f"(kısa klipler döngü sorununu önlemek için elenecek)")
 
     stock_count = 0
     ai_count = 0
@@ -356,7 +495,7 @@ def main():
         if plan.get("use_stock"):
             mp4_path = os.path.join(args.out, f"scene_{i:03d}.mp4")
             got_stock = search_pexels_video(plan.get("stock_query", ""), pexels_key,
-                                             mp4_path, used_video_ids)
+                                             mp4_path, used_video_ids, target_clip_length)
             if got_stock:
                 stock_count += 1
                 print(f"Sahne {i}/{len(scenes)}: STOK video -> {mp4_path} "
