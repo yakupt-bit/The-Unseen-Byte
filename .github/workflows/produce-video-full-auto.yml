@@ -71,6 +71,8 @@ jobs:
         run: python scripts/generate_titles.py --script script.md --out titles.json
         
       - name: 4.5) Niche check (gate before expensive steps)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/niche_check.py --script script.md --titles titles.json
         
       - name: 5) Voiceover (Wiro voice-clone)
