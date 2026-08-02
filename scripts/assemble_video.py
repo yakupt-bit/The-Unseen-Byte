@@ -44,7 +44,8 @@ RESOLUTION = "1280x720"
 XFADE_DURATION = 0.6
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 LOGO_PATH = "assets/branding/logo.png"
-MAX_SCENES = 60  # generate_scenes.py ile aynı olmalı
+SENTENCES_PER_SCENE = 3  # generate_scenes.py ile aynı olmalı
+MAX_SCENES = 90  # generate_scenes.py ile aynı olmalı
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
@@ -98,19 +99,21 @@ def get_audio_duration(path: str) -> float:
 
 def split_into_scenes(script_text: str):
     """
-    generate_scenes.py ile BİREBİR AYNI mantık (cümle bazlı bölme) -
-    aksi halde sahne sayısı iki dosya arasında uyumsuz olur ve overlay/
-    klip eşleşmesi bozulur."""
+    generate_scenes.py ile BİREBİR AYNI mantık (cümle bazlı bölme,
+    SENTENCES_PER_SCENE cümlede bir sahne) - aksi halde sahne sayısı
+    iki dosya arasında uyumsuz olur ve overlay/klip eşleşmesi bozulur.
+    """
     normalized = re.sub(r"\n{2,}", " ", script_text).strip()
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", normalized) if s.strip()]
 
     if not sentences:
         return [script_text.strip()] if script_text.strip() else []
-    if len(sentences) <= MAX_SCENES:
-        return sentences
+
+    group_size = SENTENCES_PER_SCENE
+    if -(-len(sentences) // group_size) > MAX_SCENES:
+        group_size = -(-len(sentences) // MAX_SCENES)
 
     merged = []
-    group_size = -(-len(sentences) // MAX_SCENES)
     for i in range(0, len(sentences), group_size):
         merged.append(" ".join(sentences[i:i + group_size]))
     return merged
