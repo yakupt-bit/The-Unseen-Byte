@@ -424,7 +424,7 @@ def main():
     silent_video = "silent_video.mp4"
     chain_with_xfade(clip_paths, clip_len, silent_video)
 
-    add_logo_and_audio(silent_video, args.audio, args.out
+    add_logo_and_audio(silent_video, args.audio, args.out)
 
     print(f"Final video hazır -> {args.out}")
 
