@@ -15,8 +15,9 @@ TEKRARLANMAZ.
 Ekstra bindirmeler:
 - VURGU KARTI (sağ üst): çarpıcı bir sayı/istatistik geçtiğinde kısa
   süreliğine görünür.
-- BİLGİ KARTI (sol üst): bir kısaltma/kurum adı (ESRB, NASA gibi)
-  geçtiğinde ne olduğunu kısaca açıklayan küçük bir kart.
+- BİLGİ KARTI (sol üst, logonun ALTINDA): bir kısaltma/kurum adı (ESRB,
+  NASA gibi) geçtiğinde ne olduğunu kısaca açıklayan küçük bir kart -
+  köşe logosuyla çakışmaması için y=140'tan başlar.
 - KÖŞE LOGOSU (sol ÜST, köşeye yakın ama tam köşede değil): video
   boyunca kalıcı, hafif saydam kanal logosu.
 
@@ -221,7 +222,7 @@ def overlay_vf_chain(vf_chain: str, callout_text: str, info_card_text: str,
         vf_chain += (
             f",drawtext=fontfile={FONT_PATH}:textfile={info_file}:"
             f"fontsize=30:fontcolor=white:box=1:boxcolor=black@0.6:"
-            f"boxborderw=14:x=50:y=50:alpha='{fade_alpha_expr(show_dur)}'"
+            f"boxborderw=14:x=50:y=140:alpha='{fade_alpha_expr(show_dur)}'"
         )
 
     return vf_chain
@@ -423,7 +424,7 @@ def main():
     silent_video = "silent_video.mp4"
     chain_with_xfade(clip_paths, clip_len, silent_video)
 
-    add_logo_and_audio(silent_video, args.audio, args.out)
+    add_logo_and_audio(silent_video, args.audio, args.out
 
     print(f"Final video hazır -> {args.out}")
 
