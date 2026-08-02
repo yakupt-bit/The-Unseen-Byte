@@ -27,12 +27,13 @@ Kurallar:
   köprü cümlesiyle izleyiciyi devam etmeye teşvik et.
 - Her iddia için araştırmadaki kaynağı doğal bir cümle içinde belirt
   ("İsviçre'deki bir araştırmaya göre..." gibi, dipnot gibi değil).
-- Video EN AZ 10, ideal olarak 10-24 dakika uzunluğunda okunacak kadar
-  DOLU DOLU olsun (~1500-3600 kelime). Yüzeysel geçme, her alt konuyu
-  gerçekten açıkla, örnekle, detaylandır - kelime doldurma değil,
-  gerçek içerik derinliği ile bu uzunluğa ulaş. Ne kadar uzun olursa
-  o kadar iyi, YETER Kİ her cümle gerçekten değer katsın, boş
-  tekrar/doldurma olmasın.
+- Video EN AZ 10, ideal olarak 10-15 dakika uzunluğunda okunacak kadar
+  DOLU DOLU olsun (~1500-2250 kelime). Yüzeysel geçme, her alt konuyu
+  gerçekten açıkla, örnekle, detaylandır - ama 15 dakikayı ZORLAMA,
+  konu bittiğinde bitir. Gereksiz tekrar/doldurma ile süreyi uzatma -
+  yeni, henüz kendini kanıtlamamış bir kanal için tutarlı 10-15 dakikalık
+  videolar, düzensiz uzun videolardan daha güvenilir bir izlenme süresi
+  sinyali verir.
 - Script'i doğal bölümlere ayır (giriş/hook, 3-5 ana bölüm, kapanış) -
   her bölüm kendi içinde tam bir düşünceyi bitirsin. BÖLÜMLERİ SADECE
   BOŞ SATIRLA ayır. ASLA "# Section 1", "Section 1:", "[0:45-4:00]"
