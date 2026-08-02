@@ -48,6 +48,25 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu libsndfile1
           pip install -r requirements.txt
 
+      - name: 0) Pick this run's niche (feeds trend query + research)
+        env:
+          TOPIC_HINT_INPUT: ${{ github.event.inputs.topic_hint }}
+        run: |
+          if [ -n "$TOPIC_HINT_INPUT" ]; then
+            echo "TOPIC_HINT=$TOPIC_HINT_INPUT" >> "$GITHUB_ENV"
+            echo "Elle verilen konu ipucu kullanılıyor: $TOPIC_HINT_INPUT"
+          else
+            PICKED=$(python -c "
+          import sys
+          sys.path.insert(0, 'scripts')
+          from research import SUB_NICHES, pick_sub_niche, load_used_topics
+          used = load_used_topics()
+          print(pick_sub_niche(len(used)))
+          ")
+            echo "TOPIC_HINT=$PICKED" >> "$GITHUB_ENV"
+            echo "Bu koşu için otomatik seçilen niş: $PICKED"
+          fi
+
       - name: 1) Trend analysis (what's actually working right now)
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
@@ -56,7 +75,6 @@ jobs:
       - name: 2) Research
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TOPIC_HINT: ${{ github.event.inputs.topic_hint }}
         run: python scripts/research.py --out facts.json
 
       - name: 3) Generate + quality-check script
