@@ -14,10 +14,10 @@ AI-üretilen içerik olduğu için "containsSyntheticMedia" bayrağı
 otomatik True gönderiliyor (YouTube'un 2024 sonrası zorunlu kıldığı
 sentetik/değiştirilmiş içerik beyanı).
 
-Açıklamaya kanal hashtag'leri eklenir (ilk 3 tanesi YouTube'da
-başlığın üzerinde otomatik gösterilir). Etiketler (tags) kanalın
-anahtar kelime listesinden dolduruluyor (YouTube'un 500 karakter
-toplam sınırına uyacak şekilde).
+Açıklamaya, VİDEOYA ÖZEL 5 hashtag eklenir (Claude ile, başlığa göre
+üretilir - artık her videoda aynı 3 sabit hashtag değil). Etiketler
+(tags) kanalın anahtar kelime listesinden dolduruluyor (YouTube'un
+500 karakter toplam sınırına uyacak şekilde).
 
 Kullanım:
     python scripts/upload_youtube.py --video output/final.mp4 \
@@ -28,6 +28,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
+import anthropic
 import requests
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -37,16 +38,16 @@ THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 DEFAULT_CATEGORY_ID = "28"
 TARGET_PUBLISH_HOUR_TR = 17  # Hedef yayın saati (Türkiye saati)
 
-HASHTAGS = ["#GamingScience", "#TechMysteries", "#GamingFacts"]
+FALLBACK_HASHTAGS = ["#GamingScience", "#TechMysteries", "#GamingFacts", "#Gaming", "#TechHistory"]
 
-DESCRIPTION_TEMPLATE = (
+DESCRIPTION_BODY = (
     "{title}\n\n"
     "The Unseen Byte digs into the science, psychology, and hidden "
     "history that shape the games you play and the technology you use "
     "every day.\n\n"
     "This video was produced with AI-assisted narration and visuals.\n\n"
     "New videos weekly.\n\n"
-    + " ".join(HASHTAGS)
+    "{hashtags}"
 )
 
 TAGS = [
@@ -60,6 +61,35 @@ TAGS = [
     "tech facts you didn't know", "forgotten technology",
     "gaming neuroscience",
 ]
+
+
+def generate_hashtags(client, title: str) -> list:
+    """Başlığa göre videoya ÖZEL 5 hashtag üretir (sabit liste değil).
+    Herhangi bir hata/parse sorununda FALLBACK_HASHTAGS'e düşer, upload
+    akışı asla bu yüzden kesilmez."""
+    prompt = f"""Bu YouTube video başlığına göre, açıklamaya eklenecek
+5 tane spesifik, videoya özel İngilizce hashtag üret (genel/sabit
+hashtag değil, bu videonun konusuna gerçekten uygun olsun).
+
+Başlık: "{title}"
+
+SADECE JSON dizi formatında yaz, başka hiçbir şey yazma:
+["#Etiket1", "#Etiket2", "#Etiket3", "#Etiket4", "#Etiket5"]"""
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text")
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        tags = json.loads(cleaned)
+        if isinstance(tags, list) and len(tags) >= 3:
+            return tags[:5]
+    except Exception as e:
+        print(f"  UYARI: hashtag üretimi başarısız ({type(e).__name__}), "
+              f"sabit yedek hashtag'ler kullanılıyor")
+    return FALLBACK_HASHTAGS
 
 
 def build_tags_within_limit(tags: list, limit: int = 480) -> list:
@@ -178,7 +208,11 @@ def main():
         titles_data = json.load(f)
     title = titles_data["selected"][0]
 
-    description = DESCRIPTION_TEMPLATE.format(title=title)
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    hashtags = generate_hashtags(client, title)
+    print(f"Üretilen hashtag'ler: {' '.join(hashtags)}")
+
+    description = DESCRIPTION_BODY.format(title=title, hashtags=" ".join(hashtags))
     video_size = os.path.getsize(args.video)
 
     print("Access token alınıyor...")
