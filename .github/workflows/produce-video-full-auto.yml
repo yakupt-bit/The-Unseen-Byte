@@ -106,7 +106,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/assemble_video.py --audio audio/final_mix.mp3 --scenes scenes/ --script script.md --out output/raw.mp4
-
+      
+      - name: 9.5) Add avatar overlay (fake lip-sync + blink + bob)
+        run: |
+          python scripts/avatar_overlay.py --video output/raw.mp4 \
+            --audio audio/final_mix.mp3 --frames-dir assets/avatar \
+            --out output/raw_with_avatar.mp4
+            
       - name: 10) Burn subtitles (synced from Whisper timestamps)
         run: |
           python scripts/subtitles.py --alignment audio/alignment.json \
