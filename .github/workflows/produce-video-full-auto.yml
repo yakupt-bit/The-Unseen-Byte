@@ -164,6 +164,7 @@ jobs:
           mkdir -p assets/scene_library
           git add used_topics.json assets/scene_library/
           git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
+          git pull --rebase origin main || true
           git push
 
       - name: Save partial outputs (runs even if an earlier step failed)
