@@ -116,7 +116,7 @@ jobs:
       - name: 10) Burn subtitles (synced from Whisper timestamps)
         run: |
           python scripts/subtitles.py --alignment audio/alignment.json \
-            --video output/raw.mp4 --out output/final.mp4
+            --video output/raw_with_avatar.mp4 --out output/final.mp4
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
