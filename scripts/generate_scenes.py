@@ -50,7 +50,7 @@ STYLE_GUIDE = (
 MODEL = "claude-sonnet-4-6"
 MODEL_UTILITY = "claude-haiku-4-5-20251001"
 SENTENCES_PER_SCENE = 3  # her sahne ~3 cümle - stok video sık değişsin
-MAX_SCENES = 90  # güvenlik üst sınırı, render süresi patlamasın
+MAX_SCENES = 120 # güvenlik üst sınırı, render süresi patlamasın
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 
