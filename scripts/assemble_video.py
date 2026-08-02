@@ -333,7 +333,7 @@ def add_logo_and_audio(silent_video: str, audio_path: str, out_path: str):
                 "-loop", "1", "-i", LOGO_PATH,
                 "-i", audio_path,
                 "-filter_complex",
-                "[1:v]scale=110:-1,format=rgba,colorchannelmixer=aa=0.8[logo];"
+                "[1:v]scale=80:-1,format=rgba,colorchannelmixer=aa=0.8[logo];"
                 "[0:v][logo]overlay=x=30:y=30:shortest=1[vout]",
                 "-map", "[vout]", "-map", "2:a",
                 "-c:v", "libx264", "-c:a", "aac",
