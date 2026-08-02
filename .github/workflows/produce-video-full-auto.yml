@@ -51,7 +51,7 @@ jobs:
       - name: 1) Trend analysis (what's actually working right now)
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-        run: python scripts/trend_analysis.py --query "gaming psychology facts documentary" --out trend.json
+        run: python scripts/trend_analysis.py --out trend.json
 
       - name: 2) Research
         env:
