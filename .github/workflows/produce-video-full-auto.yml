@@ -129,6 +129,7 @@ jobs:
         run: |
           python scripts/avatar_overlay.py --video output/raw.mp4 \
             --audio audio/final_mix.mp3 --frames-dir assets/avatar \
+            --height-px 180 \
             --out output/raw_with_avatar.mp4
             
       - name: 10) Burn subtitles (synced from Whisper timestamps)
