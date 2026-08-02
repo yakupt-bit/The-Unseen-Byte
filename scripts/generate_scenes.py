@@ -49,7 +49,8 @@ STYLE_GUIDE = (
 
 MODEL = "claude-sonnet-4-6"
 MODEL_UTILITY = "claude-haiku-4-5-20251001"
-MAX_SCENES = 60  # daha kısa klipler = daha hareketli, daha az monoton video
+SENTENCES_PER_SCENE = 3  # her sahne ~3 cümle - stok video sık değişsin
+MAX_SCENES = 90  # güvenlik üst sınırı, render süresi patlamasın
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 
@@ -115,23 +116,23 @@ def call_claude(client, prompt, model=MODEL, max_tokens=300):
 
 def split_into_scenes(script_text: str):
     """
-    Script'i CÜMLE bazlı böler (paragraf bazlı değil) - böylece sahne
-    sayısı gerçekten MAX_SCENES'e yaklaşır. Eskiden paragraf sayısı
-    kadar sahne çıkıyordu (ör. 33 paragraf -> sadece 33 sahne), MAX_SCENES
-    sadece üst sınırdı, hedef değildi. Artık script'teki toplam cümle
-    sayısı MAX_SCENES'e bölünüyor, bu da çok daha kısa/hareketli klipler
-    ve MAX_SCENES'e yakın bir sahne sayısı demek.
+    Script'i CÜMLE bazlı böler, her sahne SENTENCES_PER_SCENE (3) cümle
+    içerir - böylece stok video sık sık (her 2-3 cümlede bir) değişir,
+    tek bir görüntü uzun süre ekranda kalmaz. MAX_SCENES sadece bir
+    güvenlik üst sınırı - script çok uzun çıkarsa render süresi/maliyeti
+    kontrolsüz büyümesin diye devreye girer.
     """
     normalized = re.sub(r"\n{2,}", " ", script_text).strip()
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", normalized) if s.strip()]
 
     if not sentences:
         return [script_text.strip()] if script_text.strip() else []
-    if len(sentences) <= MAX_SCENES:
-        return sentences
+
+    group_size = SENTENCES_PER_SCENE
+    if -(-len(sentences) // group_size) > MAX_SCENES:
+        group_size = -(-len(sentences) // MAX_SCENES)
 
     merged = []
-    group_size = -(-len(sentences) // MAX_SCENES)
     for i in range(0, len(sentences), group_size):
         merged.append(" ".join(sentences[i:i + group_size]))
     return merged
