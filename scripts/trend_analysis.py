@@ -4,10 +4,15 @@ YouTube Data API ile nişe yakın, son dönemde yüksek izlenen videoları
 Bu dosya sonra generate_script.py ve generate_titles.py tarafından
 "şu an gerçekten işe yarayan formatlar" referansı olarak kullanılır.
 
---query verilmezse, aşağıdaki QUERY_POOL'dan RASTGELE biri seçilir -
-böylece art arda yakın zamanlı çalıştırmalarda hep aynı (dolayısıyla
-hep aynı sonuçları veren) sorgu tekrarlanmaz, her seferinde nişin
-farklı bir açısından trend verisi çekilir.
+SORGU ÖNCELİK SIRASI:
+  1. --query elle verildiyse onu kullan (en yüksek öncelik).
+  2. Verilmediyse, workflow'un "0) Pick this run's niche" adımının
+     ayarladığı TOPIC_HINT ortam değişkenine bak - bu, o koşuda hangi
+     alt-niş seçildiyse (ör. "Esports & Competitive Culture") onun adını
+     içerir, arama sorgusu olarak kullanılır. Böylece trend verisi
+     GERÇEKTEN o videonun konusuyla alakalı örnekler getirir.
+  3. TOPIC_HINT de yoksa (ör. elle/manuel çalıştırma), aşağıdaki
+     QUERY_POOL'dan RASTGELE biri seçilir.
 
 Not: YouTube Data API günlük kota sınırlıdır (varsayılan 10.000 birim/gün,
 search.list çağrısı 100 birim tutar) - bu scripti günde birkaç kez
@@ -19,6 +24,7 @@ Kullanım:
 """
 import argparse
 import datetime
+import json
 import os
 import random
 
@@ -27,6 +33,8 @@ import requests
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
+# Sadece TOPIC_HINT de yoksa (elle/manuel çalıştırma) devreye giren
+# yedek havuz - 6 ana kategoriyi temsilen genişletildi.
 QUERY_POOL = [
     "gaming psychology facts documentary",
     "video game history mystery",
@@ -36,14 +44,27 @@ QUERY_POOL = [
     "science of video games",
     "retro gaming untold story",
     "why games are addictive science",
+    "esports documentary secrets",
+    "lost cancelled video games",
+    "video game preservation history",
+    "corporate gaming industry decisions",
 ]
+
+
+def derive_query_from_topic_hint(topic_hint: str) -> str:
+    """TOPIC_HINT formatı 'Kategori Adı - açıklama...' şeklinde
+    (research.py'deki SUB_NICHES listesine bakılırsa). Arama sorgusu
+    için sadece '-' öncesindeki kısa kategori adını alıyoruz, tam
+    açıklamayı değil (YouTube arama API'si uzun cümlelerde daha kötü
+    sonuç veriyor)."""
+    short_name = topic_hint.split(" - ")[0].strip()
+    return short_name
 
 
 def search_recent_popular(query: str, api_key: str, days_back: int = 60, max_results: int = 15):
     published_after = (
         datetime.datetime.utcnow() - datetime.timedelta(days=days_back)
     ).isoformat("T") + "Z"
-
     resp = requests.get(SEARCH_URL, params={
         "key": api_key,
         "part": "snippet",
@@ -83,19 +104,28 @@ def fetch_stats(video_ids, api_key):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--query", required=False, default="",
-                         help="Niş ile ilgili arama terimi (boşsa havuzdan rastgele seçilir)")
+                         help="Niş ile ilgili arama terimi (boşsa TOPIC_HINT, o da yoksa havuzdan rastgele seçilir)")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
-    query = args.query.strip() if args.query else random.choice(QUERY_POOL)
-    print(f"Kullanılan sorgu: \"{query}\"")
+    if args.query.strip():
+        query = args.query.strip()
+        source = "elle verildi (--query)"
+    else:
+        topic_hint = os.environ.get("TOPIC_HINT", "").strip()
+        if topic_hint:
+            query = derive_query_from_topic_hint(topic_hint) + " documentary"
+            source = f"TOPIC_HINT'ten türetildi (\"{topic_hint}\")"
+        else:
+            query = random.choice(QUERY_POOL)
+            source = "TOPIC_HINT yok, havuzdan rastgele seçildi"
+
+    print(f"Kullanılan sorgu: \"{query}\" ({source})")
 
     api_key = os.environ["YOUTUBE_API_KEY"]
-
     video_ids = search_recent_popular(query, api_key)
     trend_data = fetch_stats(video_ids, api_key)
 
-    import json
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(trend_data, f, ensure_ascii=False, indent=2)
 
