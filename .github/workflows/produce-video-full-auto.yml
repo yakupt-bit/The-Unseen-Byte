@@ -4,13 +4,18 @@ name: Produce Video (fully automated)
 # -> seslendirme -> altyazı -> sahne görselleri -> kapak -> render ->
 # müzik miksajı -> altyazı gömme.
 #
-# Zamanlama SADECE cron-job.org üzerinden yönetiliyor (hafta içi her
-# gün, 11:00 Türkiye saati - pipeline'a tampon süre vermek için).
+# Zamanlama SADECE cron-job.org üzerinden yönetiliyor (haftada 3 gün,
+# 11:00 Türkiye saati - pipeline'a tampon süre vermek için).
 # GitHub'ın kendi dahili "schedule" tetikleyicisi BİLEREK yok.
 # Video ise upload_youtube.py sayesinde YouTube'un kendi zamanlı
 # yayın özelliğiyle tam 17:00 TR'de otomatik yayına giriyor (ya da
 # pipeline 17:00'i geçtikten sonra biterse hemen herkese açık olarak
 # yayınlanıyor).
+#
+# NİŞ KONTROLÜ YENİDEN DENEME: research + script + title + niche-check
+# adımları TEK bir döngü içinde, en fazla 5 kez farklı alt-nişle
+# denenir. Niş kontrolü başarısız olursa insan müdahalesi GEREKMEZ,
+# sistem otomatik olarak başka bir konuyla devam eder.
 #
 # GÜVENLİK AĞI: Herhangi bir adımda hata olsa bile (bkz. en alttaki
 # "Save partial outputs" adımı), o ana kadar üretilen her şey
@@ -72,27 +77,33 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: python scripts/trend_analysis.py --out trend.json
 
-      - name: 2) Research
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/research.py --out facts.json
-
-      - name: 3) Generate + quality-check script
+      - name: "2-4.5) Research + script + title + niche-check (uyumsuzsa otomatik 5 kez farklı konuyla dener)"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FLAG: ${{ github.event.inputs.test_mode == 'true' && '--test' || '' }}
-        run: python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
+        run: |
+          MAX_ATTEMPTS=5
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "=== Deneme $attempt/$MAX_ATTEMPTS ==="
+            export RETRY_OFFSET=$((attempt - 1))
 
-      - name: "4) Generate title (curiosity-gap: thumbnail asks, title develops)"
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/generate_titles.py --script script.md --out titles.json
-        
-      - name: 4.5) Niche check (gate before expensive steps)
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/niche_check.py --script script.md --titles titles.json
-        
+            python scripts/research.py --out facts.json
+            python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
+            python scripts/generate_titles.py --script script.md --out titles.json
+
+            if python scripts/niche_check.py --script script.md --titles titles.json; then
+              echo "Niş kontrolü geçti, devam ediliyor."
+              break
+            fi
+
+            if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+              echo "$MAX_ATTEMPTS deneme sonunda hiçbir konu niş kontrolünden geçemedi, iş durduruluyor."
+              exit 1
+            fi
+
+            echo "Niş kontrolü başarısız, farklı bir alt-nişle yeniden deneniyor..."
+          done
+
       - name: 5) Voiceover (Wiro voice-clone)
         env:
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
@@ -124,14 +135,14 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/assemble_video.py --audio audio/final_mix.mp3 --scenes scenes/ --script script.md --out output/raw.mp4
-      
+
       - name: 9.5) Add avatar overlay (fake lip-sync + blink + bob)
         run: |
           python scripts/avatar_overlay.py --video output/raw.mp4 \
             --audio audio/final_mix.mp3 --frames-dir assets/avatar \
             --height-px 180 \
             --out output/raw_with_avatar.mp4
-            
+
       - name: 10) Burn subtitles (synced from Whisper timestamps)
         run: |
           python scripts/subtitles.py --alignment audio/alignment.json \
