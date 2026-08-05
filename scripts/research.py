@@ -7,6 +7,11 @@ her birinde 3 alt-niş) biri, ÜRETİLEN VİDEO SAYISINA göre sırayla
 seçilir - böylece takvim günü atlasa da (haftada 3 gün yayın) rotasyon
 düzgün ilerler, gün bazlı değildir.
 
+RETRY_OFFSET ortam değişkeni verilirse (workflow'daki yeniden deneme
+döngüsü tarafından ayarlanır), rotasyonu o kadar ileri kaydırır - böylece
+niş kontrolü başarısız olup yeniden denendiğinde FARKLI bir alt-niş
+seçilir, aynı reddedilen konu tekrar denenmez.
+
 GERÇEK KONU TEKRARI ÖNLEME: used_topics.json dosyası (repo kökünde,
 her çalıştırma sonunda güncellenip commit edilir) o ana kadar işlenen
 TÜM spesifik konuların bir listesini tutar. Her yeni araştırmada bu
@@ -54,8 +59,8 @@ USED_TOPICS_FILE = "used_topics.json"
 MAX_TOPICS_IN_PROMPT = 40
 
 
-def pick_sub_niche(used_topics_count: int) -> str:
-    idx = used_topics_count % len(SUB_NICHES)
+def pick_sub_niche(used_topics_count: int, retry_offset: int = 0) -> str:
+    idx = (used_topics_count + retry_offset) % len(SUB_NICHES)
     return SUB_NICHES[idx]
 
 
@@ -102,8 +107,10 @@ def main():
 
     topic_hint = os.environ.get("TOPIC_HINT", "").strip()
     if not topic_hint:
-        topic_hint = pick_sub_niche(len(used_topics))
-        print(f"Konu ipucu verilmedi, otomatik alt-niş seçildi: {topic_hint}")
+        retry_offset = int(os.environ.get("RETRY_OFFSET", "0"))
+        topic_hint = pick_sub_niche(len(used_topics), retry_offset)
+        print(f"Konu ipucu verilmedi, otomatik alt-niş seçildi: {topic_hint}"
+              + (f" (deneme #{retry_offset + 1})" if retry_offset else ""))
 
     prompt = load_prompt(topic_hint, used_topics)
 
