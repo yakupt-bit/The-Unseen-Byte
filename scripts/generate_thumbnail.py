@@ -1,10 +1,10 @@
 """
 Seçilen tek başlık için TEK bir kapak (thumbnail) üretir (Wiro API,
-openai/gpt-image-2) ve üzerine metin bindirir (PIL).
+openai/gpt-image-2) ve üzerine metin + avatar bindirir (PIL).
 
 ÖNEMLİ (kapak-başlık ilişkisi):
 Kapak, başlığın bir tekrarı DEĞİLDİR. Kapak, izleyiciye ham bir
-SORU/GİZEM sunar (görsel + 3-5 kelimelik kışkırtıcı metin); başlık bu
+SORU/GİZEM sunar (görsel + 2-3 kelimelik kışkırtıcı metin); başlık bu
 sorunun bağlamını/gelişmesini verir ama cevabı vermez; videonun kendisi
 asıl cevabı verir. Bu yüzden kapak için Claude'dan başlıktan bağımsız,
 daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
@@ -12,6 +12,23 @@ daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
 NOT: YouTube'un native A/B testi (Test & Compare) API'den erişilemiyor
 ve YPP üyeliği gerektiriyor, bu yüzden sistem artık çoklu kapak yerine
 tek, en güçlü kapağı üretiyor (bkz. generate_titles.py).
+
+GÖRSEL DİL:
+- Ok/daire vurgusu KALDIRILDI (AI modeli tutarlı/alakalı konuma
+  yerleştiremiyordu).
+- Metin sol altta, kenardan uzakta, koyu/yüksek kontrast bir kutu
+  üzerinde, EN FAZLA 3 KELİME - CTR artırmak için daha punch'lı.
+- Sağ altta, HER VİDEOYA ÖZEL üretilen avatar yüzü - karakterin genel
+  kimliği (yüz/gözlük/saç tarzı) korunur, sadece YÜZ İFADESİ videonun
+  konusuna göre değişir (şok, merak, endişe vb.), tekrar önlenir.
+  Gözlük/ceket TAM renk eşleşmesi zorlanmıyor (üretim başarısızlığını
+  azaltmak için) - asıl önemli olan yüz/karakter kimliğinin tanınabilir
+  kalması. Sadece yüz+omuz üretiliyor, el YOK (AI'da tutarsız
+  çıkabiliyor, riskten kaçınmak için tarif dışında bırakıldı).
+  Üretim başarısız olursa sabit assets/avatar/open_blink.png'ye
+  düşülür; o da yoksa avatar hiç eklenmez - pipeline asla kırılmaz.
+- Dört kenara kanal logosunun renginde ince bir çerçeve (marka
+  tutarlılığı için).
 
 Claude API çağrısı geçici hatalara (500, rate limit, bağlantı kopması)
 karşı otomatik olarak yeniden dener (bkz. call_claude).
@@ -55,16 +72,40 @@ THUMBNAIL_STYLE = (
     "image, 16:9"
 )
 
-ANNOTATION_PROBABILITY = 0.35  # ok/daire her kapakta DEĞİL, ~%35 ihtimalle
-
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
-ANNOTATION_COLOR = (235, 45, 45)
+
+# Kanal logosunun rengi (sarı-yeşil/lime) - çerçeve için kullanılıyor.
+BORDER_COLOR = (205, 220, 57)
+BORDER_WIDTH = 4  # piksel
 
 TEXT_COLOR_PALETTE = [
     (255, 255, 255),  # beyaz - klasik, her zaman okunaklı
     (255, 214, 0),    # sarı - dikkat çekici, gizem/uyarı hissi
     (255, 59, 48),    # kırmızı - dramatik, acil/şok hissi
 ]
+
+# Karakterin genel kimlik tarifi - avatar_overlay.py'de kullanılan
+# görsellerle aynı karakteri referans alıyor. Gözlük/ceket TAM renk
+# eşleşmesi zorlanmıyor (üretim başarısızlığını azaltmak için); asıl
+# önemli olan yüz/karakter kimliğinin tanınabilir kalması.
+CHARACTER_DESCRIPTION = (
+    "a man in his late twenties to mid-thirties, glasses, short neat "
+    "brown hair, a dark tech-themed jacket, warm skin tone, calm and "
+    "intelligent baseline demeanor, stylized semi-realistic digital "
+    "illustration style - exact glasses/jacket color can vary slightly "
+    "between generations, the face and overall character identity "
+    "should stay recognizable and consistent"
+)
+
+# Dinamik avatar üretimi başarısız olursa düşülecek sabit yedek.
+FALLBACK_AVATAR_PATH = "assets/avatar/open_blink.png"
+
+AVATAR_HEIGHT_FRAC = 0.62  # kapak yüksekliğinin ne kadarını kaplasın
+
+GREEN_SCREEN_BG = (
+    "SOLID FLAT PURE GREEN BACKGROUND (chroma key green screen, "
+    "#00FF00, completely uniform, no gradient, no shadow, no texture)"
+)
 
 
 def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
@@ -93,9 +134,8 @@ def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
 def generate_thumbnail_concept(client, title: str, script_excerpt: str) -> dict:
     """
     Başlıktan BAĞIMSIZ bir kapak konsepti üretir: bir görsel açıklama
-    (image prompt) ve çok kısa bir kışkırtıcı metin (hook text).
-    Kapak, başlığın vereceği bağlamı/gelişmeyi VERMEMELİDİR - sadece
-    ham soruyu/gizemi ortaya koymalıdır.
+    (image prompt), çok kısa bir kışkırtıcı metin (hook text) VE bu
+    videoya özel bir avatar yüz ifadesi tarifi.
     """
     prompt = f"""Bir YouTube kapak görseli (thumbnail) konsepti üret.
 
@@ -113,12 +153,20 @@ doğrudan kopyalama): {script_excerpt[:800]}
 1. "visual_prompt": İngilizce, somut bir SAHNE/NESNE/AN tarifi (ör. bir
    nesnenin garip bir detayı, açıklanamayan bir an). Kişi/karakter
    isimlerinden kaçın, jenerik ve görsel olarak net olsun.
-2. "hook_text": İngilizce, TÜM BÜYÜK HARF, EN FAZLA 5 KELİME, soru
-   işareti kullanmadan da merak uyandıran kışkırtıcı bir ifade
-   (ör. "THE PART NO ONE EXPLAINS", "HIDDEN FOR 30 YEARS"). Başlıktaki
-   kelimeleri birebir tekrarlama.
+2. "hook_text": İngilizce, TÜM BÜYÜK HARF, EN FAZLA 3 KELİME (2 kelime
+   daha da güçlü olur), soru işareti kullanmadan, ŞOK EDİCİ/İDDİALI bir
+   ifade - "interesting" değil "impossible to ignore" hissi versin
+   (ör. "NEVER EXPLAINED", "THE REAL REASON", "HIDDEN COST"). Kelimeler
+   ne kadar az, punch o kadar güçlü. Başlıktaki kelimeleri birebir
+   tekrarlama.
+3. "avatar_expression": İngilizce, TEK CÜMLE, bu videonun konusuna
+   uygun bir YÜZ İFADESİ tarifi (ör. "eyes wide with shock, mouth
+   slightly open in disbelief", "one eyebrow raised, intensely
+   curious and skeptical expression", "concerned, slightly worried
+   expression, brow furrowed"). Sadece yüz ifadesini tarif et, kıyafet/
+   saç/gözlük gibi diğer detayları tarif ETME (onlar zaten sabit).
 
-Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "..."}}"""
+Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "avatar_expression": "..."}}"""
 
     raw = call_claude(client, prompt)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
@@ -129,7 +177,8 @@ doğrudan kopyalama): {script_excerpt[:800]}
         return {
             "visual_prompt": "a mysterious object under dramatic lighting, "
                               "close-up on one strange unexplained detail",
-            "hook_text": "WHAT NO ONE EXPLAINS",
+            "hook_text": "NEVER EXPLAINED",
+            "avatar_expression": "eyes wide with shock, mouth slightly open",
         }
 
 
@@ -163,61 +212,113 @@ def generate_background(prompt: str, out_path: str):
             raise
 
 
-def draw_annotation(draw, img_w, img_h, avoid_bottom_frac=0.45):
-    style = random.choice(["circle", "arrow"])
-    safe_top = int(img_h * 0.08)
-    safe_bottom = int(img_h * (1 - avoid_bottom_frac))
-    safe_left = int(img_w * 0.45)
-    safe_right = int(img_w * 0.92)
+def remove_green_screen(image_path: str, out_path: str):
+    """Düz yeşil ekran arka planını gerçek şeffaflığa çevirir (numpy
+    gerekmeden, saf PIL piksel erişimiyle - tek seferlik, video başına
+    1 kez çalıştığı için performans sorun değil)."""
+    img = Image.open(image_path).convert("RGBA")
+    pixels = img.load()
+    w, h = img.size
 
-    cx = random.randint(safe_left, safe_right)
-    cy = random.randint(safe_top, safe_bottom)
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pixels[x, y]
+            # Yeşil ekran testi: yeşil kanal kırmızı/mavi kanallardan
+            # belirgin şekilde yüksekse şeffaf yap.
+            if g > 100 and g > r + 40 and g > b + 40:
+                pixels[x, y] = (r, g, b, 0)
 
-    if style == "circle":
-        r = random.randint(int(img_w * 0.06), int(img_w * 0.09))
-        width = max(4, int(img_w * 0.007))
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=ANNOTATION_COLOR, width=width)
-    else:
-        length = int(img_w * 0.12)
-        angle_choices = [(-1, 1), (1, 1), (-1, -1)]
-        dx, dy = random.choice(angle_choices)
-        x0, y0 = cx - dx * length, cy - dy * length
-        x1, y1 = cx, cy
-        width = max(5, int(img_w * 0.008))
-        draw.line([x0, y0, x1, y1], fill=ANNOTATION_COLOR, width=width)
-        head_size = int(img_w * 0.02)
-        draw.polygon([
-            (x1, y1),
-            (x1 - dx * head_size - dy * head_size, y1 - dy * head_size + dx * head_size),
-            (x1 - dx * head_size + dy * head_size, y1 - dy * head_size - dx * head_size),
-        ], fill=ANNOTATION_COLOR)
+    img.save(out_path)
 
 
-def overlay_text(image_path: str, hook_text: str, out_path: str):
+def generate_avatar_face(expression: str, out_path: str) -> bool:
+    """Bu videoya özel, karakterin genel kimliğini koruyan ama yüz
+    ifadesi videoya göre değişen bir avatar üretir. Başarılı olursa
+    True, olmazsa False döner (çağıran taraf sabit yedeğe düşer)."""
+    prompt = (
+        f"A stylized digital illustration portrait of {CHARACTER_DESCRIPTION}, "
+        f"face and shoulders only, NO hands or arms visible in frame, "
+        f"{expression}, front-facing, centered composition, "
+        f"{GREEN_SCREEN_BG}, no text"
+    )
+    try:
+        raw_path = out_path + ".raw.png"
+        task = run_model("openai", "gpt-image-2", {
+            "prompt": prompt,
+            "resolution": "1k",
+            "ratio": "1:1",
+            "quality": "medium",
+            "samples": 1,
+        })
+        download_output(task, raw_path)
+        remove_green_screen(raw_path, out_path)
+        os.remove(raw_path)
+        return True
+    except Exception as e:
+        print(f"  UYARI: özel avatar üretimi başarısız ({e}), sabit yedeğe düşülüyor")
+        return False
+
+
+def draw_border(draw, img_w, img_h):
+    """Dört kenara, kanal logosunun renginde ince bir çerçeve çizer
+    (marka tutarlılığı için)."""
+    for i in range(BORDER_WIDTH):
+        draw.rectangle(
+            [i, i, img_w - 1 - i, img_h - 1 - i],
+            outline=BORDER_COLOR,
+        )
+
+
+def paste_avatar(img: Image.Image, avatar_path: str):
+    """Kapağın sağ alt köşesine avatar karakterini bindirir. Dosya
+    yoksa/yüklenemezse sessizce atlanır - pipeline asla kırılmaz."""
+    if not os.path.exists(avatar_path):
+        print(f"  UYARI: {avatar_path} bulunamadı, kapakta avatar olmadan devam ediliyor")
+        return img.convert("RGB")
+
+    try:
+        avatar = Image.open(avatar_path).convert("RGBA")
+    except Exception as e:
+        print(f"  UYARI: avatar yüklenemedi ({e}), kapakta avatar olmadan devam ediliyor")
+        return img.convert("RGB")
+
+    target_h = int(img.height * AVATAR_HEIGHT_FRAC)
+    scale = target_h / avatar.height
+    target_w = int(avatar.width * scale)
+    avatar = avatar.resize((target_w, target_h), Image.LANCZOS)
+
+    # Sağ kenara hafifçe taşacak, alt kenara yapışık - dramatik "ekrandan
+    # fırlıyor" hissi. Metin sol altta olduğu için çakışma yok.
+    x = img.width - target_w + int(target_w * 0.08)
+    y = img.height - target_h
+
+    base = img.convert("RGBA")
+    base.alpha_composite(avatar, (x, y))
+    return base.convert("RGB")
+
+
+def overlay_text(image_path: str, hook_text: str, avatar_path: str, out_path: str):
     img = Image.open(image_path).convert("RGB")
+
+    # Avatar EN ÖNCE eklenir ki metin/çerçeve onun üstünde net kalsın
+    img = paste_avatar(img, avatar_path)
+
     draw = ImageDraw.Draw(img, "RGBA")
 
-    # Ok/daire vurgusu ARTIK HER KAPAKTA değil - NYGMA tarzı referanslarda
-    # olduğu gibi çoğu kapak sadece güçlü görsel + metinle çalışıyor,
-    # ok/daire sadece arada bir (ANNOTATION_PROBABILITY ihtimalle) ek bir
-    # vurgu olarak kullanılıyor.
-    if random.random() < ANNOTATION_PROBABILITY:
-        draw_annotation(draw, img.width, img.height)
-
-    max_text_width = int(img.width * 0.92)
+    max_text_width = int(img.width * 0.6)  # avatar sağı kapladığı için daraltıldı
     max_text_height = int(img.height * 0.38)
     x_margin = int(img.width * 0.04)
-    bottom_margin = int(img.height * 0.05)
+    bottom_margin = int(img.height * 0.14)
 
     short_text = hook_text.strip().upper()
 
-    font_size = int(img.height * 0.14)
-    min_font_size = int(img.height * 0.05)
+    font_size = int(img.height * 0.16)
+    min_font_size = int(img.height * 0.06)
 
     while font_size > min_font_size:
         font = ImageFont.truetype(FONT_PATH, font_size)
         avg_char_w = font.getbbox("A")[2] - font.getbbox("A")[0]
-        wrap_width = max(6, max_text_width // max(avg_char_w, 1))
+        wrap_width = max(4, max_text_width // max(avg_char_w, 1))
         wrapped = textwrap.fill(short_text, width=wrap_width)
 
         bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
@@ -229,7 +330,7 @@ def overlay_text(image_path: str, hook_text: str, out_path: str):
         font_size -= 4
     else:
         font = ImageFont.truetype(FONT_PATH, min_font_size)
-        wrapped = textwrap.fill(short_text, width=14)
+        wrapped = textwrap.fill(short_text, width=10)
         bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
         text_h = bbox[3] - bbox[1]
 
@@ -238,7 +339,7 @@ def overlay_text(image_path: str, hook_text: str, out_path: str):
     pad = 16
     draw.rectangle(
         [x - pad, y - pad, x + (bbox[2] - bbox[0]) + pad, y + text_h + pad],
-        fill=(0, 0, 0, 140),
+        fill=(0, 0, 0, 210),
     )
 
     for dx in (-3, -1, 0, 1, 3):
@@ -247,6 +348,9 @@ def overlay_text(image_path: str, hook_text: str, out_path: str):
                                  fill=(0, 0, 0, 255), spacing=10)
     text_color = random.choice(TEXT_COLOR_PALETTE)
     draw.multiline_text((x, y), wrapped, font=font, fill=(*text_color, 255), spacing=10)
+
+    # En son, her şeyin üstüne kanal renginde ince çerçeve
+    draw_border(draw, img.width, img.height)
 
     img.save(out_path)
 
@@ -278,10 +382,16 @@ def main():
     raw_path = os.path.join(args.out_dir, "raw_1.png")
     generate_background(concept["visual_prompt"], raw_path)
 
+    # Bu videoya özel avatar üretmeyi dene; başarısız olursa sabit yedeğe düş
+    dynamic_avatar_path = os.path.join(args.out_dir, "avatar_face.png")
+    avatar_ok = generate_avatar_face(concept.get("avatar_expression", ""), dynamic_avatar_path)
+    avatar_path_to_use = dynamic_avatar_path if avatar_ok else FALLBACK_AVATAR_PATH
+
     final_path = os.path.join(args.out_dir, "thumbnail_1.png")
-    overlay_text(raw_path, concept["hook_text"], final_path)
+    overlay_text(raw_path, concept["hook_text"], avatar_path_to_use, final_path)
     print(f"Kapak hazır -> {final_path}  "
-          f"(hook: \"{concept['hook_text']}\", başlık: \"{title}\")")
+          f"(hook: \"{concept['hook_text']}\", avatar: {'özel üretildi' if avatar_ok else 'sabit yedek'}, "
+          f"başlık: \"{title}\")")
 
 
 if __name__ == "__main__":
