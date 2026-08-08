@@ -9,6 +9,13 @@ sorunun bağlamını/gelişmesini verir ama cevabı vermez; videonun kendisi
 asıl cevabı verir. Bu yüzden kapak için Claude'dan başlıktan bağımsız,
 daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
 
+TREND REFERANSI (--trends verilirse): trend_analysis.py'nin çektiği
+nişte GERÇEKTEN tutan videoların BAŞLIKLARI (görselleri DEĞİL - telif
+riski olmasın diye sadece metin kalıpları) bağlam olarak Claude'a
+veriliyor. Amaç birebir kopyalamak değil, "bu nişte şu enerji/ton işe
+yarıyor" sinyalini kapak konseptine yansıtmak - hâlâ tamamen orijinal
+bir görsel/metin üretiliyor.
+
 NOT: YouTube'un native A/B testi (Test & Compare) API'den erişilemiyor
 ve YPP üyeliği gerektiriyor, bu yüzden sistem artık çoklu kapak yerine
 tek, en güçlü kapağı üretiyor (bkz. generate_titles.py).
@@ -35,7 +42,7 @@ karşı otomatik olarak yeniden dener (bkz. call_claude).
 
 Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
-    python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/ --script script.md
+    python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/ --script script.md --trends trend.json
 """
 import argparse
 import json
@@ -107,6 +114,8 @@ GREEN_SCREEN_BG = (
     "#00FF00, completely uniform, no gradient, no shadow, no texture)"
 )
 
+MAX_TREND_TITLES = 8  # prompt'a en fazla kaç trend başlığı eklensin
+
 
 def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
     """Claude'a istek atar; geçici hatalarda (500/rate limit/bağlantı)
@@ -131,12 +140,39 @@ def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
     raise last_error
 
 
-def generate_thumbnail_concept(client, title: str, script_excerpt: str) -> dict:
+def load_trend_titles(trends_path: str) -> list:
+    """trend_analysis.py çıktısından SADECE başlıkları (görsel/link
+    değil) çıkarır - en çok izlenen ilk MAX_TREND_TITLES kadarını.
+    Dosya yoksa ya da okunamazsa boş liste döner, pipeline kırılmaz."""
+    if not trends_path or not os.path.exists(trends_path):
+        return []
+    try:
+        with open(trends_path, "r", encoding="utf-8") as f:
+            trend_data = json.load(f)
+        if not isinstance(trend_data, list):
+            return []
+        return [v.get("title", "") for v in trend_data[:MAX_TREND_TITLES] if v.get("title")]
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def generate_thumbnail_concept(client, title: str, script_excerpt: str,
+                                trend_titles: list) -> dict:
     """
     Başlıktan BAĞIMSIZ bir kapak konsepti üretir: bir görsel açıklama
     (image prompt), çok kısa bir kışkırtıcı metin (hook text) VE bu
     videoya özel bir avatar yüz ifadesi tarifi.
     """
+    trend_block = ""
+    if trend_titles:
+        trend_block = (
+            "\n\nBU NİŞTE ŞU AN GERÇEKTEN TUTAN VİDEO BAŞLIKLARI (referans "
+            "için - bunları KOPYALAMA, birebir tekrar etme, sadece hangi "
+            "TON/ENERJİ/KELİME TARZI işe yaradığını anla ve kendi özgün "
+            "hook_text'ine o enerjiyi yansıt):\n"
+            + "\n".join(f"- {t}" for t in trend_titles)
+        )
+
     prompt = f"""Bir YouTube kapak görseli (thumbnail) konsepti üret.
 
 KESİN KURAL: Bu kapak, aşağıdaki başlıkla AYNI bilgiyi VERMEMELİ.
@@ -148,6 +184,7 @@ BAŞLIK (kapakta bunu tekrar etme, bundan bağımsız düşün): {title}
 
 SCRIPT'TEN KISA ALINTI (konunun özünü anlamak için, kapak metnine
 doğrudan kopyalama): {script_excerpt[:800]}
+{trend_block}
 
 Üret:
 1. "visual_prompt": İngilizce, somut bir SAHNE/NESNE/AN tarifi (ör. bir
@@ -361,6 +398,8 @@ def main():
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--script", required=False, default="script.md",
                          help="Kapak konsepti için bağlam olarak kullanılacak script dosyası")
+    parser.add_argument("--trends", required=False, default="trend.json",
+                         help="trend_analysis.py çıktısı - nişte tutan başlıkları referans almak için")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -375,9 +414,13 @@ def main():
         with open(args.script, "r", encoding="utf-8") as f:
             script_excerpt = f.read()
 
+    trend_titles = load_trend_titles(args.trends)
+    if trend_titles:
+        print(f"  {len(trend_titles)} trend başlığı referans olarak kullanılıyor")
+
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    concept = generate_thumbnail_concept(client, title, script_excerpt)
+    concept = generate_thumbnail_concept(client, title, script_excerpt, trend_titles)
 
     raw_path = os.path.join(args.out_dir, "raw_1.png")
     generate_background(concept["visual_prompt"], raw_path)
