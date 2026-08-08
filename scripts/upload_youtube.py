@@ -36,8 +36,7 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 
 DEFAULT_CATEGORY_ID = "28"
-TARGET_PUBLISH_HOUR_TR = 17  # Hedef yayın saati (Türkiye saati)
-
+TARGET_PUBLISH_HOUR_TR = 21  # Hedef yayın saati (Türkiye saati) - global (ABD/İngiltere) İngilizce kitle için optimize edildi
 FALLBACK_HASHTAGS = ["#GamingScience", "#TechMysteries", "#GamingFacts", "#Gaming", "#TechHistory"]
 
 DESCRIPTION_BODY = (
