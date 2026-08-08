@@ -2,6 +2,14 @@
 Haftalık konu araştırması yapar, Claude API'ye prompts/research_prompt.md
 şablonunu gönderir ve sonucu facts.json olarak kaydeder.
 
+CANLI WEB ARAMASI (grounding): Claude artık facts.json üretirken
+GERÇEK ZAMANLI web araması yapabiliyor (Anthropic'in web_search tool'u
+etkin). Bu, script'in kendi hafızasından üretilmiş - potansiyel olarak
+hatalı/uydurma - kaynaklara güvenme riskini azaltır; Claude artık
+iddia ettiği kitap/makale/tarih gibi detayları gerçekten arayıp
+doğrulayabiliyor. Arama sonuçları aynı API çağrısı içinde otomatik
+işleniyor, ekstra bir kod döngüsüne gerek yok.
+
 Elle bir TOPIC_HINT verilmezse, aşağıdaki 18 alt-nişten (6 ana kategori,
 her birinde 3 alt-niş) biri, ÜRETİLEN VİDEO SAYISINA göre sırayla
 seçilir - böylece takvim günü atlasa da (haftada 3 gün yayın) rotasyon
@@ -58,6 +66,23 @@ SUB_NICHES = [
 USED_TOPICS_FILE = "used_topics.json"
 MAX_TOPICS_IN_PROMPT = 40
 
+# Anthropic'in sunucu tarafı web arama aracı - Claude prompt'u işlerken
+# gerekli gördüğü aramaları otomatik yapar, sonuçları aynı yanıt
+# içinde döndürür (ekstra bir döngü/kod gerekmez).
+WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search"}]
+
+GROUNDING_INSTRUCTION = (
+    "\n\nÖNEMLİ - GERÇEK KAYNAK DOĞRULAMA: Bir iddia, tarih, kitap adı, "
+    "yayın yılı veya istatistik kullanacaksan, bunu kendi hafızandan "
+    "UYDURMADAN ÖNCE web araması yaparak gerçekten var olduğunu ve "
+    "doğru olduğunu doğrula. Emin olmadığın veya aramada teyit "
+    "edemediğin spesifik bir detay (ör. bir kitabın tam yayın yılı, "
+    "bir makalenin tam başlığı) varsa, o detayı ÇIKAR veya daha genel "
+    "bir ifadeyle değiştir - kesinlikle uydurma bir kaynak gösterme. "
+    "Doğrulanmış, gerçek kaynaklar kullanılmış bir konu, hiç "
+    "kaynaklanmamış ama iddialı bir konudan her zaman daha değerlidir."
+)
+
 
 def pick_sub_niche(used_topics_count: int, retry_offset: int = 0) -> str:
     idx = (used_topics_count + retry_offset) % len(SUB_NICHES)
@@ -94,7 +119,20 @@ def load_prompt(topic_hint: str, used_topics: list) -> str:
         )
         prompt += avoid_block
 
+    prompt += GROUNDING_INSTRUCTION
+
     return prompt
+
+
+def extract_text(response) -> str:
+    """Yanıttaki TÜM metin bloklarını birleştirir. Web araması
+    kullanıldığında yanıt, arama sorguları/sonuçları için ek content
+    bloklarıyla (tool_use, web_search_tool_result) birlikte geliyor -
+    sadece type=='text' olan blokları alıp birleştirmek, aramanın
+    ürettiği ekstra blokları otomatik olarak es geçer."""
+    return "".join(
+        block.text for block in response.content if block.type == "text"
+    )
 
 
 def main():
@@ -117,13 +155,12 @@ def main():
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
+        max_tokens=4000,  # web araması ek content bloğu ürettiği için yükseltildi
+        tools=WEB_SEARCH_TOOL,
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw_text = "".join(
-        block.text for block in response.content if block.type == "text"
-    )
+    raw_text = extract_text(response)
 
     cleaned = raw_text.replace("```json", "").replace("```", "").strip()
 
