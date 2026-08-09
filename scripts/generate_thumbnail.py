@@ -1,6 +1,6 @@
 """
 Seçilen tek başlık için TEK bir kapak (thumbnail) üretir (Wiro API,
-openai/gpt-image-2) ve üzerine metin + avatar bindirir (PIL).
+openai/gpt-image-2) ve üzerine metin + kırmızı vurgu halkası bindirir (PIL).
 
 ÖNEMLİ (kapak-başlık ilişkisi):
 Kapak, başlığın bir tekrarı DEĞİLDİR. Kapak, izleyiciye ham bir
@@ -20,23 +20,21 @@ NOT: YouTube'un native A/B testi (Test & Compare) API'den erişilemiyor
 ve YPP üyeliği gerektiriyor, bu yüzden sistem artık çoklu kapak yerine
 tek, en güçlü kapağı üretiyor (bkz. generate_titles.py).
 
-GÖRSEL DİL:
-- Ok/daire vurgusu KALDIRILDI (AI modeli tutarlı/alakalı konuma
-  yerleştiremiyordu).
+GÖRSEL DİL (NESNE-ODAKLI FORMAT - avatar tamamen kaldırıldı):
+Kanıtlanmış iki bağımsız sinyal (VidIQ kapak puanlaması + YouTube'un
+kendi AI kapak önerisi) bu nişte avatar/yüz kullanmayan, tek bir
+dramatik nesneye/detaya kilitlenen kapakların çok daha güçlü
+performans gösterdiğini gösterdi. Bu yüzden:
+- Kapağın TEK kahramanı, konuyla ilgili somut bir NESNE/DETAY (madeni
+  para, eski telefon, oyun kartuşu vb.) - yakın çekim, dramatik ışık,
+  net ve tek bakışta okunur.
+- KIRMIZI VURGU ELEMENTİ (halka veya ok) nesnenin/detayın en kritik
+  noktasını işaret eder - izleyicinin bakışını anında konuya kilitler.
 - Metin sol altta, kenardan uzakta, koyu/yüksek kontrast bir kutu
   üzerinde, EN FAZLA 3 KELİME - CTR artırmak için daha punch'lı.
-- Sağ tarafta, HER VİDEOYA ÖZEL üretilen BÜYÜK bir avatar yüzü -
-  karakterin genel kimliği (yüz/gözlük/saç tarzı) korunur, sadece YÜZ
-  İFADESİ videonun konusuna göre değişir (şok, merak, endişe vb.),
-  tekrar önlenir. Avatarın sol kenarı arka plana YUMUŞAK GEÇİŞLE erir
-  (sert/yapıştırma hissi veren kesim yok) ve rengi arka plan tonuna
-  hafifçe uyumlanır - tek, bütünleşik bir görsel gibi durur. Gözlük/
-  ceket TAM renk eşleşmesi zorlanmıyor (üretim başarısızlığını
-  azaltmak için) - asıl önemli olan yüz/karakter kimliğinin tanınabilir
-  kalması. Sadece yüz+omuz üretiliyor, el YOK (AI'da tutarsız
-  çıkabiliyor, riskten kaçınmak için tarif dışında bırakıldı).
-  Üretim başarısız olursa sabit assets/avatar/open_blink.png'ye
-  düşülür; o da yoksa avatar hiç eklenmez - pipeline asla kırılmaz.
+- Arka plan hafif bulanık/derinlik hissi veren ikincil bağlam öğeleri
+  içerebilir (ör. bulanık bir atari makinesi, oyun kutuları) ama asıl
+  netlik/odak her zaman ön plandaki nesnede.
 - Dört kenara kanal logosunun renginde ince bir çerçeve (marka
   tutarlılığı için).
 
@@ -48,6 +46,7 @@ Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/ --script script.md --trends trend.json
 """
 import argparse
+import base64
 import json
 import os
 import random
@@ -55,7 +54,7 @@ import textwrap
 import time
 
 import anthropic
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageStat, ImageChops
+from PIL import Image, ImageDraw, ImageFont
 
 from wiro_client import run_model, download_output
 
@@ -94,31 +93,9 @@ TEXT_COLOR_PALETTE = [
     (255, 59, 48),    # kırmızı - dramatik, acil/şok hissi
 ]
 
-# Karakterin genel kimlik tarifi - avatar_overlay.py'de kullanılan
-# görsellerle aynı karakteri referans alıyor. Gözlük/ceket TAM renk
-# eşleşmesi zorlanmıyor (üretim başarısızlığını azaltmak için); asıl
-# önemli olan yüz/karakter kimliğinin tanınabilir kalması.
-CHARACTER_DESCRIPTION = (
-    "a man in his late twenties to mid-thirties, glasses, short neat "
-    "brown hair, a dark tech-themed jacket, warm skin tone, calm and "
-    "intelligent baseline demeanor, stylized semi-realistic digital "
-    "illustration style - exact glasses/jacket color can vary slightly "
-    "between generations, the face and overall character identity "
-    "should stay recognizable and consistent"
-)
-
-# Dinamik avatar üretimi başarısız olursa düşülecek sabit yedek.
-FALLBACK_AVATAR_PATH = "assets/avatar/open_blink.png"
-
-AVATAR_HEIGHT_FRAC = 0.90    # kapak yüksekliğinin ne kadarını kaplasın (büyütüldü)
-AVATAR_FADE_FRAC = 0.32      # avatarın sol kenarının ne kadarı yumuşak geçişe ayrılsın
-AVATAR_EDGE_FEATHER = 3      # piksel, silüet kenarını yumuşatan blur yarıçapı
-COLOR_MATCH_STRENGTH = 0.15  # avatarı arka plan tonuna ne kadar yaklaştıralım (0-1)
-
-GREEN_SCREEN_BG = (
-    "SOLID FLAT PURE GREEN BACKGROUND (chroma key green screen, "
-    "#00FF00, completely uniform, no gradient, no shadow, no texture)"
-)
+# Kırmızı vurgu elementinin (halka/ok) rengi - nesnenin kritik
+# noktasını işaret eder, izleyicinin bakışını konuya kilitler.
+EMPHASIS_COLOR = (230, 30, 30)
 
 MAX_TREND_TITLES = 8  # prompt'a en fazla kaç trend başlığı eklensin
 
@@ -166,8 +143,8 @@ def generate_thumbnail_concept(client, title: str, script_excerpt: str,
                                 trend_titles: list) -> dict:
     """
     Başlıktan BAĞIMSIZ bir kapak konsepti üretir: bir görsel açıklama
-    (image prompt), çok kısa bir kışkırtıcı metin (hook text) VE bu
-    videoya özel bir avatar yüz ifadesi tarifi.
+    (image prompt), çok kısa bir kışkırtıcı metin (hook text) VE kırmızı
+    vurgu halkasının nereye çizileceğini belirleyen bir hedef tarifi.
     """
     trend_block = ""
     if trend_titles:
@@ -193,36 +170,27 @@ doğrudan kopyalama): {script_excerpt[:800]}
 {trend_block}
 
 Üret:
-1. "visual_prompt": İngilizce, somut bir SAHNE/NESNE/AN tarifi (ör. bir
-   nesnenin garip bir detayı, açıklanamayan bir an). Kişi/karakter
-   isimlerinden kaçın, jenerik ve görsel olarak net olsun.
-   KOMPOZİSYON KURALI (ÇOK ÖNEMLİ): Bu kapağın SAĞ tarafına (yaklaşık
-   sağ %55-60'ı) ayrıca büyük bir karakter avatarı bindirilecek. Bu
-   yüzden asıl görsel konuyu/nesneyi/detayı SOL TARAFTA veya kompozisyonun
-   SOLUNA AĞIRLIKLI kur - konunun ne olduğu, sağ taraf tamamen kapansa
-   bile SOL YARIDAN TEK BAŞINA anlaşılabilmeli (ör. Fuji Dağı + pagoda
-   görüldüğünde "bu Japonya" anlaşılması gibi - anlık, net, tek bakışta).
-   Sağ tarafı fazla detaylı/karmaşık doldurma, orası avatarla örtüşecek.
+1. "visual_prompt": İngilizce, somut, TEK BİR NESNEYE/DETAYA odaklanan
+   bir SAHNE tarifi (ör. eski bir telefon, bir oyun kartuşu, bir madeni
+   para, garip bir mekanizma). Yakın çekim, dramatik ışık, net ve tek
+   bakışta ne olduğu anlaşılır olsun. Arka planda hafif bulanık
+   ikincil/bağlamsal öğeler olabilir (ör. bulanık bir atari makinesi,
+   oyun kutuları) ama net odak HER ZAMAN ön plandaki tek nesnede olsun.
+   Kişi/karakter/yüz KULLANMA - bu formatta kapak tamamen nesne
+   odaklı, insan figürü YOK.
 2. "hook_text": İngilizce, TÜM BÜYÜK HARF, EN FAZLA 3 KELİME (2 kelime
    daha da güçlü olur), soru işareti kullanmadan, ŞOK EDİCİ/İDDİALI bir
    ifade - "interesting" değil "impossible to ignore" hissi versin
    (ör. "NEVER EXPLAINED", "THE REAL REASON", "HIDDEN COST"). Kelimeler
    ne kadar az, punch o kadar güçlü. Başlıktaki kelimeleri birebir
    tekrarlama.
-3. "avatar_expression": İngilizce, TEK CÜMLE, bu videonun konusuna
-   uygun bir YÜZ İFADESİ VE KAFA AÇISI tarifi. Yüz ifadesi videonun
-   konusuna uysun (ör. "eyes wide with shock, mouth slightly open in
-   disbelief", "one eyebrow raised, intensely curious and skeptical
-   expression", "concerned, slightly worried expression, brow furrowed").
-   Kafa açısı İÇİN ÇEŞİTLİLİK sağla - illa kameraya dümdüz bakmak
-   ZORUNDA DEĞİL, üç çeyrek profil veya yan profil de olabilir (ör.
-   "looking slightly to the side with a three-quarter angle", "in
-   side profile looking off-frame"), TEK KISIT: sırtı/arkası kameraya
-   dönük OLMASIN, yüzün en azından bir kısmı her zaman görünür kalsın.
-   Kıyafet/saç/gözlük gibi diğer detayları tarif ETME (onlar zaten
-   sabit).
+3. "emphasis_target": İngilizce, TEK CÜMLE, visual_prompt'taki nesnenin
+   TAM OLARAK HANGİ NOKTASININ/BÖLGESİNİN kırmızı bir halka veya okla
+   vurgulanacağını tarif et (ör. "the small scratch mark near the
+   center of the coin", "the rotary dial of the phone"). Bu, kırmızı
+   vurgu elementinin nereye çizileceğini belirleyecek.
 
-Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "avatar_expression": "..."}}"""
+Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "emphasis_target": "..."}}"""
 
     raw = call_claude(client, prompt)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
@@ -234,7 +202,7 @@ doğrudan kopyalama): {script_excerpt[:800]}
             "visual_prompt": "a mysterious object under dramatic lighting, "
                               "close-up on one strange unexplained detail",
             "hook_text": "NEVER EXPLAINED",
-            "avatar_expression": "eyes wide with shock, mouth slightly open",
+            "emphasis_target": "the most visually distinctive detail in the center of the frame",
         }
 
 
@@ -268,67 +236,6 @@ def generate_background(prompt: str, out_path: str):
             raise
 
 
-def remove_green_screen(image_path: str, out_path: str):
-    """Düz yeşil ekran arka planını gerçek şeffaflığa çevirir. Alfa artık
-    binary (0/255) değil, yeşilliğin derecesine göre KADEMELİ - bu da
-    silüet kenarında doğal bir anti-alias/yumuşaklık verir (sert,
-    'yapıştırma hissi' veren kesim yerine)."""
-    img = Image.open(image_path).convert("RGBA")
-    pixels = img.load()
-    w, h = img.size
-
-    for y in range(h):
-        for x in range(w):
-            r, g, b, a = pixels[x, y]
-            greenness = g - max(r, b)
-            if greenness > 0:
-                # Ne kadar yeşilse o kadar şeffaf; hafif yeşilliklerde
-                # (silüet kenarı) kademeli geçiş, tam yeşilde tam şeffaf.
-                alpha = max(0, 255 - int(greenness * 4.5))
-                # Yeşil sızıntısını (spill) da bastır ki kenarda yeşil
-                # halo kalmasın.
-                g_clamped = min(g, max(r, b))
-                pixels[x, y] = (r, g_clamped, b, alpha)
-
-    # Kenarları ekstra yumuşat - jagged/keskin geçişleri eritir
-    r_ch, g_ch, b_ch, a_ch = img.split()
-    a_ch = a_ch.filter(ImageFilter.GaussianBlur(AVATAR_EDGE_FEATHER))
-    img = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
-
-    img.save(out_path)
-
-
-def generate_avatar_face(expression: str, out_path: str) -> bool:
-    """Bu videoya özel, karakterin genel kimliğini koruyan ama yüz
-    ifadesi videoya göre değişen bir avatar üretir. Başarılı olursa
-    True, olmazsa False döner (çağıran taraf sabit yedeğe düşer)."""
-    prompt = (
-        f"A stylized digital illustration portrait of {CHARACTER_DESCRIPTION}, "
-        f"face and shoulders only, NO hands or arms visible in frame, "
-        f"{expression}, angle can vary (front-facing, three-quarter, or "
-        f"side profile) but NEVER with the back of the head facing the "
-        f"camera - part of the face must always be visible, well-lit, "
-        f"bright even lighting on the face (avoid heavy shadow), "
-        f"{GREEN_SCREEN_BG}, no text"
-    )
-    try:
-        raw_path = out_path + ".raw.png"
-        task = run_model("openai", "gpt-image-2", {
-            "prompt": prompt,
-            "resolution": "1k",
-            "ratio": "1:1",
-            "quality": "medium",
-            "samples": 1,
-        })
-        download_output(task, raw_path)
-        remove_green_screen(raw_path, out_path)
-        os.remove(raw_path)
-        return True
-    except Exception as e:
-        print(f"  UYARI: özel avatar üretimi başarısız ({e}), sabit yedeğe düşülüyor")
-        return False
-
-
 def draw_border(draw, img_w, img_h):
     """Dört kenara, kanal logosunun renginde ince bir çerçeve çizer
     (marka tutarlılığı için)."""
@@ -339,74 +246,96 @@ def draw_border(draw, img_w, img_h):
         )
 
 
-def paste_avatar(img: Image.Image, avatar_path: str):
-    """Kapağın sağ tarafına, büyük ve arka planla KAYNAŞMIŞ görünen bir
-    avatar bindirir: sol kenarda yumuşak alfa geçişi (arka plana erir,
-    keskin hat yok) + arka plan tonuna hafif renk uyumu. Dosya
-    yoksa/yüklenemezse sessizce atlanır - pipeline asla kırılmaz.
-    Döner: (işlenmiş görsel, avatarın sol kenar x koordinatı)."""
-    if not os.path.exists(avatar_path):
-        print(f"  UYARI: {avatar_path} bulunamadı, kapakta avatar olmadan devam ediliyor")
-        return img.convert("RGB"), img.width
+def locate_emphasis_point(client, image_path: str, emphasis_target: str,
+                           img_w: int, img_h: int):
+    """Claude'a (vision) üretilen görseli gösterip emphasis_target'ın
+    TAM piksel koordinatını ve yaklaşık boyutunu sordurur. İki deneme
+    hakkı var (geçici hata/parse sorunu için). İkisi de başarısız
+    olursa None döner - çağıran taraf SABİT/ALAKASIZ bir yere halka
+    çizmek yerine halkayı TAMAMEN ATLAR (yanlış yere vurgu, hiç vurgu
+    olmamasından daha kötü olur)."""
+    for attempt in range(2):
+        try:
+            with open(image_path, "rb") as f:
+                image_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
 
-    try:
-        avatar = Image.open(avatar_path).convert("RGBA")
-    except Exception as e:
-        print(f"  UYARI: avatar yüklenemedi ({e}), kapakta avatar olmadan devam ediliyor")
-        return img.convert("RGB"), img.width
+            prompt = (
+                f"Bu görselde şunu bul: \"{emphasis_target}\". "
+                f"Görsel {img_w}x{img_h} piksel boyutunda. Bu noktanın "
+                f"MERKEZ piksel koordinatını (x, y) ve etrafına çizilecek "
+                f"vurgu halkasının yarıçapını (radius, piksel) tahmin et. "
+                f"Eğer bu detayı görselde NET olarak bulamıyorsan, "
+                f"\"found\": false döndür.\n\n"
+                f"Çıktı SADECE JSON: {{\"found\": true, \"x\": <int>, "
+                f"\"y\": <int>, \"radius\": <int>}} ya da {{\"found\": false}}"
+            )
+            response = client.messages.create(
+                model=MODEL_CREATIVE,
+                max_tokens=150,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {
+                            "type": "base64", "media_type": "image/png", "data": image_b64
+                        }},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+            )
+            raw = "".join(b.text for b in response.content if b.type == "text")
+            cleaned = raw.replace("```json", "").replace("```", "").strip()
+            result = json.loads(cleaned)
 
-    target_h = int(img.height * AVATAR_HEIGHT_FRAC)
-    scale = target_h / avatar.height
-    target_w = int(avatar.width * scale)
-    avatar = avatar.resize((target_w, target_h), Image.LANCZOS)
+            if not result.get("found", False):
+                print(f"  UYARI: Claude vurgu noktasını görselde bulamadı "
+                      f"(deneme {attempt + 1}/2)")
+                continue
 
-    x = img.width - target_w
-    y = img.height - target_h
+            x, y, radius = int(result["x"]), int(result["y"]), int(result["radius"])
+            x = max(0, min(img_w, x))
+            y = max(0, min(img_h, y))
+            radius = max(int(img_h * 0.08), min(int(img_h * 0.4), radius))
+            return (x, y, radius)
+        except Exception as e:
+            print(f"  UYARI: vurgu noktası tespiti başarısız "
+                  f"({type(e).__name__}, deneme {attempt + 1}/2)")
 
-    try:
-        # --- Renk uyumu: avatarı arka planın o bölgesinin ortalama
-        # tonuna hafifçe yaklaştır, "ayrı görsel" hissini azaltır ---
-        bg_patch = img.convert("RGB").crop(
-            (max(0, x), max(0, y), img.width, img.height)
+    print("  UYARI: 2 denemede de vurgu noktası bulunamadı, "
+          "bu kapakta halka OLMADAN devam ediliyor (yanlış yere "
+          "halka çizmek yerine)")
+    return None
+
+
+def draw_emphasis_ring(img: Image.Image, center_x: int, center_y: int, radius: int):
+    """Nesnenin kritik noktasının etrafına kırmızı, hafif kalın bir
+    vurgu halkası çizer - izleyicinin bakışını konuya kilitler."""
+    draw = ImageDraw.Draw(img, "RGBA")
+    ring_width = max(4, int(radius * 0.06))
+    for i in range(ring_width):
+        r = radius - i
+        draw.ellipse(
+            [center_x - r, center_y - r, center_x + r, center_y + r],
+            outline=(*EMPHASIS_COLOR, 255),
         )
-        bg_avg = ImageStat.Stat(bg_patch).mean[:3]
-        tint_layer = Image.new("RGB", avatar.size, tuple(int(c) for c in bg_avg))
-        avatar_rgb = avatar.convert("RGB")
-        toned_rgb = Image.blend(avatar_rgb, tint_layer, COLOR_MATCH_STRENGTH)
-        avatar = Image.merge("RGBA", (*toned_rgb.split(), avatar.split()[3]))
-
-        # --- Sol kenarda yumuşak geçiş maskesi: avatarın soluna doğru
-        # alfa kademeli olarak azalır, arka planla eriyerek birleşir ---
-        fade_w = int(target_w * AVATAR_FADE_FRAC)
-        if fade_w > 0:
-            fade_mask = Image.new("L", avatar.size, 255)
-            fpx = fade_mask.load()
-            for fx in range(min(fade_w, target_w)):
-                a_val = int(255 * (fx / fade_w))
-                for fy in range(target_h):
-                    fpx[fx, fy] = a_val
-            orig_alpha = avatar.split()[3]
-            combined_alpha = ImageChops.multiply(orig_alpha, fade_mask)
-            avatar.putalpha(combined_alpha)
-    except Exception as e:
-        print(f"  UYARI: renk uyumu/yumuşak geçiş uygulanamadı ({e}), "
-              f"avatar standart şekilde bindiriliyor")
-
-    base = img.convert("RGBA")
-    base.alpha_composite(avatar, (x, y))
-    return base.convert("RGB"), x
+    return img
 
 
-def overlay_text(image_path: str, hook_text: str, avatar_path: str, out_path: str):
+def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, out_path: str):
     img = Image.open(image_path).convert("RGB")
 
-    # Avatar EN ÖNCE eklenir ki metin/çerçeve onun üstünde net kalsın
-    img, avatar_left_x = paste_avatar(img, avatar_path)
+    # Vurgu halkası ÖNCE eklenir ki metin kutusu onun üstünde net kalsın.
+    # Nokta bulunamazsa (None) halka HİÇ ÇİZİLMEZ - alakasız/yanlış bir
+    # yere halka koymaktansa temiz kapak tercih edilir.
+    emphasis_point = locate_emphasis_point(client, image_path, emphasis_target,
+                                            img.width, img.height)
+    if emphasis_point:
+        ex, ey, eradius = emphasis_point
+        img = draw_emphasis_ring(img, ex, ey, eradius)
 
     draw = ImageDraw.Draw(img, "RGBA")
 
     x_margin = int(img.width * 0.04)
-    max_text_width = max(int(img.width * 0.25), avatar_left_x - x_margin - 20)
+    max_text_width = int(img.width * 0.6)
     max_text_height = int(img.height * 0.38)
     bottom_margin = int(img.height * 0.14)
 
@@ -488,15 +417,11 @@ def main():
     raw_path = os.path.join(args.out_dir, "raw_1.png")
     generate_background(concept["visual_prompt"], raw_path)
 
-    # Bu videoya özel avatar üretmeyi dene; başarısız olursa sabit yedeğe düş
-    dynamic_avatar_path = os.path.join(args.out_dir, "avatar_face.png")
-    avatar_ok = generate_avatar_face(concept.get("avatar_expression", ""), dynamic_avatar_path)
-    avatar_path_to_use = dynamic_avatar_path if avatar_ok else FALLBACK_AVATAR_PATH
-
     final_path = os.path.join(args.out_dir, "thumbnail_1.png")
-    overlay_text(raw_path, concept["hook_text"], avatar_path_to_use, final_path)
+    overlay_text(raw_path, concept["hook_text"], client,
+                 concept.get("emphasis_target", ""), final_path)
     print(f"Kapak hazır -> {final_path}  "
-          f"(hook: \"{concept['hook_text']}\", avatar: {'özel üretildi' if avatar_ok else 'sabit yedek'}, "
+          f"(hook: \"{concept['hook_text']}\", vurgu: \"{concept.get('emphasis_target', '')}\", "
           f"başlık: \"{title}\")")
 
 
