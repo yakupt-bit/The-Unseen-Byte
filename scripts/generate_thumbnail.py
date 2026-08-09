@@ -25,10 +25,13 @@ GÖRSEL DİL:
   yerleştiremiyordu).
 - Metin sol altta, kenardan uzakta, koyu/yüksek kontrast bir kutu
   üzerinde, EN FAZLA 3 KELİME - CTR artırmak için daha punch'lı.
-- Sağ altta, HER VİDEOYA ÖZEL üretilen avatar yüzü - karakterin genel
-  kimliği (yüz/gözlük/saç tarzı) korunur, sadece YÜZ İFADESİ videonun
-  konusuna göre değişir (şok, merak, endişe vb.), tekrar önlenir.
-  Gözlük/ceket TAM renk eşleşmesi zorlanmıyor (üretim başarısızlığını
+- Sağ tarafta, HER VİDEOYA ÖZEL üretilen BÜYÜK bir avatar yüzü -
+  karakterin genel kimliği (yüz/gözlük/saç tarzı) korunur, sadece YÜZ
+  İFADESİ videonun konusuna göre değişir (şok, merak, endişe vb.),
+  tekrar önlenir. Avatarın sol kenarı arka plana YUMUŞAK GEÇİŞLE erir
+  (sert/yapıştırma hissi veren kesim yok) ve rengi arka plan tonuna
+  hafifçe uyumlanır - tek, bütünleşik bir görsel gibi durur. Gözlük/
+  ceket TAM renk eşleşmesi zorlanmıyor (üretim başarısızlığını
   azaltmak için) - asıl önemli olan yüz/karakter kimliğinin tanınabilir
   kalması. Sadece yüz+omuz üretiliyor, el YOK (AI'da tutarsız
   çıkabiliyor, riskten kaçınmak için tarif dışında bırakıldı).
@@ -52,7 +55,7 @@ import textwrap
 import time
 
 import anthropic
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageStat, ImageChops
 
 from wiro_client import run_model, download_output
 
@@ -107,7 +110,10 @@ CHARACTER_DESCRIPTION = (
 # Dinamik avatar üretimi başarısız olursa düşülecek sabit yedek.
 FALLBACK_AVATAR_PATH = "assets/avatar/open_blink.png"
 
-AVATAR_HEIGHT_FRAC = 0.62  # kapak yüksekliğinin ne kadarını kaplasın
+AVATAR_HEIGHT_FRAC = 0.90    # kapak yüksekliğinin ne kadarını kaplasın (büyütüldü)
+AVATAR_FADE_FRAC = 0.32      # avatarın sol kenarının ne kadarı yumuşak geçişe ayrılsın
+AVATAR_EDGE_FEATHER = 3      # piksel, silüet kenarını yumuşatan blur yarıçapı
+COLOR_MATCH_STRENGTH = 0.15  # avatarı arka plan tonuna ne kadar yaklaştıralım (0-1)
 
 GREEN_SCREEN_BG = (
     "SOLID FLAT PURE GREEN BACKGROUND (chroma key green screen, "
@@ -250,9 +256,10 @@ def generate_background(prompt: str, out_path: str):
 
 
 def remove_green_screen(image_path: str, out_path: str):
-    """Düz yeşil ekran arka planını gerçek şeffaflığa çevirir (numpy
-    gerekmeden, saf PIL piksel erişimiyle - tek seferlik, video başına
-    1 kez çalıştığı için performans sorun değil)."""
+    """Düz yeşil ekran arka planını gerçek şeffaflığa çevirir. Alfa artık
+    binary (0/255) değil, yeşilliğin derecesine göre KADEMELİ - bu da
+    silüet kenarında doğal bir anti-alias/yumuşaklık verir (sert,
+    'yapıştırma hissi' veren kesim yerine)."""
     img = Image.open(image_path).convert("RGBA")
     pixels = img.load()
     w, h = img.size
@@ -260,10 +267,20 @@ def remove_green_screen(image_path: str, out_path: str):
     for y in range(h):
         for x in range(w):
             r, g, b, a = pixels[x, y]
-            # Yeşil ekran testi: yeşil kanal kırmızı/mavi kanallardan
-            # belirgin şekilde yüksekse şeffaf yap.
-            if g > 100 and g > r + 40 and g > b + 40:
-                pixels[x, y] = (r, g, b, 0)
+            greenness = g - max(r, b)
+            if greenness > 0:
+                # Ne kadar yeşilse o kadar şeffaf; hafif yeşilliklerde
+                # (silüet kenarı) kademeli geçiş, tam yeşilde tam şeffaf.
+                alpha = max(0, 255 - int(greenness * 4.5))
+                # Yeşil sızıntısını (spill) da bastır ki kenarda yeşil
+                # halo kalmasın.
+                g_clamped = min(g, max(r, b))
+                pixels[x, y] = (r, g_clamped, b, alpha)
+
+    # Kenarları ekstra yumuşat - jagged/keskin geçişleri eritir
+    r_ch, g_ch, b_ch, a_ch = img.split()
+    a_ch = a_ch.filter(ImageFilter.GaussianBlur(AVATAR_EDGE_FEATHER))
+    img = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
 
     img.save(out_path)
 
@@ -307,44 +324,74 @@ def draw_border(draw, img_w, img_h):
 
 
 def paste_avatar(img: Image.Image, avatar_path: str):
-    """Kapağın sağ alt köşesine avatar karakterini bindirir. Dosya
-    yoksa/yüklenemezse sessizce atlanır - pipeline asla kırılmaz."""
+    """Kapağın sağ tarafına, büyük ve arka planla KAYNAŞMIŞ görünen bir
+    avatar bindirir: sol kenarda yumuşak alfa geçişi (arka plana erir,
+    keskin hat yok) + arka plan tonuna hafif renk uyumu. Dosya
+    yoksa/yüklenemezse sessizce atlanır - pipeline asla kırılmaz.
+    Döner: (işlenmiş görsel, avatarın sol kenar x koordinatı)."""
     if not os.path.exists(avatar_path):
         print(f"  UYARI: {avatar_path} bulunamadı, kapakta avatar olmadan devam ediliyor")
-        return img.convert("RGB")
+        return img.convert("RGB"), img.width
 
     try:
         avatar = Image.open(avatar_path).convert("RGBA")
     except Exception as e:
         print(f"  UYARI: avatar yüklenemedi ({e}), kapakta avatar olmadan devam ediliyor")
-        return img.convert("RGB")
+        return img.convert("RGB"), img.width
 
     target_h = int(img.height * AVATAR_HEIGHT_FRAC)
     scale = target_h / avatar.height
     target_w = int(avatar.width * scale)
     avatar = avatar.resize((target_w, target_h), Image.LANCZOS)
 
-    # Sağ kenara hafifçe taşacak, alt kenara yapışık - dramatik "ekrandan
-    # fırlıyor" hissi. Metin sol altta olduğu için çakışma yok.
-    x = img.width - target_w + int(target_w * 0.08)
+    x = img.width - target_w
     y = img.height - target_h
+
+    try:
+        # --- Renk uyumu: avatarı arka planın o bölgesinin ortalama
+        # tonuna hafifçe yaklaştır, "ayrı görsel" hissini azaltır ---
+        bg_patch = img.convert("RGB").crop(
+            (max(0, x), max(0, y), img.width, img.height)
+        )
+        bg_avg = ImageStat.Stat(bg_patch).mean[:3]
+        tint_layer = Image.new("RGB", avatar.size, tuple(int(c) for c in bg_avg))
+        avatar_rgb = avatar.convert("RGB")
+        toned_rgb = Image.blend(avatar_rgb, tint_layer, COLOR_MATCH_STRENGTH)
+        avatar = Image.merge("RGBA", (*toned_rgb.split(), avatar.split()[3]))
+
+        # --- Sol kenarda yumuşak geçiş maskesi: avatarın soluna doğru
+        # alfa kademeli olarak azalır, arka planla eriyerek birleşir ---
+        fade_w = int(target_w * AVATAR_FADE_FRAC)
+        if fade_w > 0:
+            fade_mask = Image.new("L", avatar.size, 255)
+            fpx = fade_mask.load()
+            for fx in range(min(fade_w, target_w)):
+                a_val = int(255 * (fx / fade_w))
+                for fy in range(target_h):
+                    fpx[fx, fy] = a_val
+            orig_alpha = avatar.split()[3]
+            combined_alpha = ImageChops.multiply(orig_alpha, fade_mask)
+            avatar.putalpha(combined_alpha)
+    except Exception as e:
+        print(f"  UYARI: renk uyumu/yumuşak geçiş uygulanamadı ({e}), "
+              f"avatar standart şekilde bindiriliyor")
 
     base = img.convert("RGBA")
     base.alpha_composite(avatar, (x, y))
-    return base.convert("RGB")
+    return base.convert("RGB"), x
 
 
 def overlay_text(image_path: str, hook_text: str, avatar_path: str, out_path: str):
     img = Image.open(image_path).convert("RGB")
 
     # Avatar EN ÖNCE eklenir ki metin/çerçeve onun üstünde net kalsın
-    img = paste_avatar(img, avatar_path)
+    img, avatar_left_x = paste_avatar(img, avatar_path)
 
     draw = ImageDraw.Draw(img, "RGBA")
 
-    max_text_width = int(img.width * 0.6)  # avatar sağı kapladığı için daraltıldı
-    max_text_height = int(img.height * 0.38)
     x_margin = int(img.width * 0.04)
+    max_text_width = max(int(img.width * 0.25), avatar_left_x - x_margin - 20)
+    max_text_height = int(img.height * 0.38)
     bottom_margin = int(img.height * 0.14)
 
     short_text = hook_text.strip().upper()
