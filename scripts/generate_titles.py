@@ -9,11 +9,20 @@ gerektiriyor. Kanal bu eşiklere ulaşana kadar tek başlık üretmek daha
 mantıklı - bu yüzden A/B akışı kaldırıldı, sistem artık doğrudan en
 güçlü tek başlığı seçip kullanıyor.
 
+TREND REFERANSI (--trends verilirse): trend_analysis.py'nin YouTube Data
+API ile çektiği GERÇEK, DOĞRULANMIŞ performans verisi (son 30 günde
+250k+ izlenme almış videoların başlığı + gerçek izlenme/beğeni sayısı)
+hem üretim hem SEÇİM adımına besleniyor. Amaç birebir kopyalamak değil,
+"bu nişte hangi başlık YAPISI/TONU gerçekten büyük izlenme çekmiş"
+sinyalini kullanmak - hâlâ tamamen özgün başlıklar üretiliyor. Sadece
+metin kalıbı kullanılıyor (görsel/link değil), telif riski yok.
+
 Her Claude API çağrısı geçici hatalara (500, rate limit, bağlantı
 kopması) karşı otomatik olarak yeniden dener (bkz. call_claude).
 
 Kullanım:
     python scripts/generate_titles.py --script script.md --out titles.json
+    python scripts/generate_titles.py --script script.md --out titles.json --trends trend.json
 """
 import argparse
 import json
@@ -35,6 +44,8 @@ RETRYABLE_EXCEPTIONS = (
     anthropic.InternalServerError,
     anthropic.RateLimitError,
 )
+
+MAX_TREND_REFERENCES = 8  # prompt'a en fazla kaç kanıtlanmış örnek eklensin
 
 
 def call_claude(client, prompt, model, max_tokens=800):
@@ -60,14 +71,74 @@ def call_claude(client, prompt, model, max_tokens=800):
     raise last_error
 
 
+def load_trend_references(trends_path: str) -> list:
+    """trend_analysis.py çıktısından başlık + GERÇEK performans verisini
+    (izlenme, beğeni oranı) çıkarır. En yüksek izlenmeye göre sıralı,
+    en fazla MAX_TREND_REFERENCES kadar. Dosya yoksa/okunamazsa ya da
+    boşsa boş liste döner - pipeline kırılmaz, eski davranışa düşülür."""
+    if not trends_path or not os.path.exists(trends_path):
+        return []
+    try:
+        with open(trends_path, "r", encoding="utf-8") as f:
+            trend_data = json.load(f)
+        if not isinstance(trend_data, list) or not trend_data:
+            return []
+
+        refs = []
+        for v in trend_data:
+            title = v.get("title", "")
+            views = v.get("views", 0)
+            likes = v.get("likes", 0)
+            if not title or views <= 0:
+                continue
+            engagement = round((likes / views) * 100, 2) if views else 0.0
+            refs.append({"title": title, "views": views, "engagement": engagement})
+
+        # En çok izlenene göre sırala - en güçlü kanıt en üstte
+        refs.sort(key=lambda r: r["views"], reverse=True)
+        return refs[:MAX_TREND_REFERENCES]
+    except (json.JSONDecodeError, OSError, TypeError):
+        return []
+
+
+def format_trend_block(trend_refs: list) -> str:
+    """Trend referanslarını, Claude'a hem üretim hem seçim adımında
+    verilecek okunabilir bir metin bloğuna çevirir."""
+    if not trend_refs:
+        return ""
+    lines = []
+    for r in trend_refs:
+        views_str = f"{r['views']:,}".replace(",", ".")
+        lines.append(f"- \"{r['title']}\" -> {views_str} izlenme, %{r['engagement']} etkileşim oranı")
+    return (
+        "\n\nBU NİŞTE SON 30 GÜNDE GERÇEKTEN BÜYÜK İZLENME ALMIŞ (250k+) "
+        "BAŞLIKLAR - GERÇEK, DOĞRULANMIŞ VERİ (YouTube Data API):\n"
+        + "\n".join(lines)
+        + "\n\nBunları BİREBİR KOPYALAMA/tekrar etme. Ama şunu analiz et: "
+        "bu başlıklarda ortak hangi YAPI (soru mu, iddia mı, sayı mı), "
+        "hangi UZUNLUK, hangi MERAK AÇIĞI TEKNİĞİ var ve YÜKSEK etkileşim "
+        "oranına sahip olanlar (düşük etkileşimlilere göre) hangi "
+        "farkı taşıyor - kendi özgün adaylarına bu kanıtlanmış sinyali yansıt."
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--trends", required=False, default="trend.json",
+                         help="trend_analysis.py çıktısı - nişte gerçekten izlenen başlıkları referans almak için")
     args = parser.parse_args()
 
     with open(args.script, "r", encoding="utf-8") as f:
         script = f.read()
+
+    trend_refs = load_trend_references(args.trends)
+    trend_block = format_trend_block(trend_refs)
+    if trend_refs:
+        print(f"  {len(trend_refs)} kanıtlanmış (gerçek izlenme verili) başlık referans olarak kullanılıyor")
+    else:
+        print("  Trend referansı yok/boş, kalıp-tabanlı üretime devam ediliyor")
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
@@ -93,6 +164,7 @@ kalıpları kullan, adaylar bu FARKLI YAKLAŞIMLARI temsil etsin:
 3. Güçlü iddia + merak açığı ("The Real Reason X Never Y")
 4. Sayı/liste formatı ("X Things You Didn't Know About Y")
 5. Doğrudan izleyiciye hitap eden meydan okuma tarzı
+{trend_block}
 
 SCRIPT:
 {script}
@@ -107,6 +179,11 @@ SCRIPT:
 GÜÇLÜ tek bir tanesini seç. Kriterler: merak açığı gücü (cevabı
 vermeden gelişmeyi vermesi), netlik, özgünlük hissi, tık tuzağı
 olmaması.
+{trend_block}
+Yukarıdaki kanıtlanmış (gerçek izlenme verili) başlıklarla yapısal
+benzerlik taşıyan adaylara, diğer her şey eşitken, hafif öncelik ver -
+ama asıl kriter hâlâ merak açığı gücü ve özgünlük, sadece kanıtlanmış
+patern eşleşmesi değil.
 
 ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 
