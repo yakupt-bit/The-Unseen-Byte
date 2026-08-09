@@ -166,8 +166,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           touch used_topics.json
+          touch used_comments.json
           mkdir -p assets/scene_library
-          git add used_topics.json assets/scene_library/
+          git add used_topics.json used_comments.json assets/scene_library/
           git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
           git pull --rebase origin main || true
           git push
