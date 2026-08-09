@@ -72,14 +72,14 @@ RETRYABLE_EXCEPTIONS = (
 )
 
 THUMBNAIL_STYLE = (
-    "dramatic mystery-documentary YouTube thumbnail aesthetic, bold "
-    "high-contrast lighting, strong single subject that fills a "
-    "significant portion of the frame, cinematic reveal-moment "
-    "composition, rich saturated color grading (deep reds, blacks, "
-    "warm ambers, or cold dramatic blues work well), sharp and "
-    "eye-catching even at small size, tech/gaming themed, leaves clear "
-    "empty space in one area for text overlay, no existing text in the "
-    "image, 16:9"
+    "bright, vivid, eye-catching mystery-documentary YouTube thumbnail "
+    "aesthetic, BOLD and CLEAR (not dark or moody), high saturation, "
+    "punchy contrast, strong single subject that fills a significant "
+    "portion of the frame and is INSTANTLY recognizable/readable at a "
+    "glance even before reading any text, cinematic but vivid color "
+    "grading (rich blues, warm oranges, bright reds - avoid muddy or "
+    "underlit scenes), well-lit, sharp and pops even at small size, "
+    "tech/gaming themed, no existing text in the image, 16:9"
 )
 
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
@@ -196,6 +196,13 @@ doğrudan kopyalama): {script_excerpt[:800]}
 1. "visual_prompt": İngilizce, somut bir SAHNE/NESNE/AN tarifi (ör. bir
    nesnenin garip bir detayı, açıklanamayan bir an). Kişi/karakter
    isimlerinden kaçın, jenerik ve görsel olarak net olsun.
+   KOMPOZİSYON KURALI (ÇOK ÖNEMLİ): Bu kapağın SAĞ tarafına (yaklaşık
+   sağ %55-60'ı) ayrıca büyük bir karakter avatarı bindirilecek. Bu
+   yüzden asıl görsel konuyu/nesneyi/detayı SOL TARAFTA veya kompozisyonun
+   SOLUNA AĞIRLIKLI kur - konunun ne olduğu, sağ taraf tamamen kapansa
+   bile SOL YARIDAN TEK BAŞINA anlaşılabilmeli (ör. Fuji Dağı + pagoda
+   görüldüğünde "bu Japonya" anlaşılması gibi - anlık, net, tek bakışta).
+   Sağ tarafı fazla detaylı/karmaşık doldurma, orası avatarla örtüşecek.
 2. "hook_text": İngilizce, TÜM BÜYÜK HARF, EN FAZLA 3 KELİME (2 kelime
    daha da güçlü olur), soru işareti kullanmadan, ŞOK EDİCİ/İDDİALI bir
    ifade - "interesting" değil "impossible to ignore" hissi versin
@@ -203,11 +210,17 @@ doğrudan kopyalama): {script_excerpt[:800]}
    ne kadar az, punch o kadar güçlü. Başlıktaki kelimeleri birebir
    tekrarlama.
 3. "avatar_expression": İngilizce, TEK CÜMLE, bu videonun konusuna
-   uygun bir YÜZ İFADESİ tarifi (ör. "eyes wide with shock, mouth
-   slightly open in disbelief", "one eyebrow raised, intensely
-   curious and skeptical expression", "concerned, slightly worried
-   expression, brow furrowed"). Sadece yüz ifadesini tarif et, kıyafet/
-   saç/gözlük gibi diğer detayları tarif ETME (onlar zaten sabit).
+   uygun bir YÜZ İFADESİ VE KAFA AÇISI tarifi. Yüz ifadesi videonun
+   konusuna uysun (ör. "eyes wide with shock, mouth slightly open in
+   disbelief", "one eyebrow raised, intensely curious and skeptical
+   expression", "concerned, slightly worried expression, brow furrowed").
+   Kafa açısı İÇİN ÇEŞİTLİLİK sağla - illa kameraya dümdüz bakmak
+   ZORUNDA DEĞİL, üç çeyrek profil veya yan profil de olabilir (ör.
+   "looking slightly to the side with a three-quarter angle", "in
+   side profile looking off-frame"), TEK KISIT: sırtı/arkası kameraya
+   dönük OLMASIN, yüzün en azından bir kısmı her zaman görünür kalsın.
+   Kıyafet/saç/gözlük gibi diğer detayları tarif ETME (onlar zaten
+   sabit).
 
 Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "avatar_expression": "..."}}"""
 
@@ -292,7 +305,10 @@ def generate_avatar_face(expression: str, out_path: str) -> bool:
     prompt = (
         f"A stylized digital illustration portrait of {CHARACTER_DESCRIPTION}, "
         f"face and shoulders only, NO hands or arms visible in frame, "
-        f"{expression}, front-facing, centered composition, "
+        f"{expression}, angle can vary (front-facing, three-quarter, or "
+        f"side profile) but NEVER with the back of the head facing the "
+        f"camera - part of the face must always be visible, well-lit, "
+        f"bright even lighting on the face (avoid heavy shadow), "
         f"{GREEN_SCREEN_BG}, no text"
     )
     try:
