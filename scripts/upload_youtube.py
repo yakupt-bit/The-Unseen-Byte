@@ -18,17 +18,21 @@ Açıklamaya, VİDEOYA ÖZEL 5 hashtag eklenir (Claude ile, başlığa göre
 üretilir). Ayrıca, mevcutsa iki EK BLOK daha eklenir (hashtag'lerin
 ÜSTÜNDE, gövde metninin ALTINDA):
   - Chapters (bölüm zaman damgaları): script.md'nin bölümlerini,
-    sesin toplam süresine ORANTILI konumlandırarak (Whisper kelime
-    sayısı script'inkiyle birebir tutmayabileceği için index eşleme
-    yerine oran kullanılıyor - daha sağlam) zaman damgalarına çevirir,
-    her bölüm için Claude ile kısa bir başlık üretir. YouTube'un
-    chapter kuralları (en az 3 bölüm, ilk 0:00, aralar >=10sn)
-    sağlanmıyorsa blok TAMAMEN ATLANIR - eksik/hatalı bir liste asla
-    yayınlanmaz.
+    sesin toplam süresine ORANTILI konumlandırarak zaman damgalarına
+    çevirir, her bölüm için Claude ile kısa bir başlık üretir.
+    YouTube'un chapter kuralları sağlanmıyorsa blok TAMAMEN ATLANIR.
   - Sources (kaynaklar): facts.json'daki her fact'in "source" alanı,
     tekilleştirilip listelenir.
-Her iki blok da veri eksikse/bozuksa sessizce atlanır, upload süreci
-ASLA bu yüzden kesilmez.
+
+SABİTLENMİŞ YORUM: Video yüklendikten sonra, script'e özel 5 aday
+yorum üretilir (Claude ile), her biri kendi içinde 1-10 puanlanır
+(özgünlük, tartışma açma gücü kriterlerine göre). En yüksek puanlı
+aday >=MIN_COMMENT_SCORE şartını sağlıyorsa kanal sahibi olarak
+atılır (kanal sahibinin yorumu YouTube tarafından otomatik üstte
+gösterilir, ekstra pin işlemi gerekmez). used_comments.json ile
+geçmiş yorumlar takip edilir, aynı kalıpta yorum tekrarlanmaz.
+Üretim/atma başarısız olursa sessizce atlanır, upload süreci ASLA
+bu yüzden kesilmez.
 
 Etiketler (tags) kanalın anahtar kelime listesinden dolduruluyor
 (YouTube'un 500 karakter toplam sınırına uyacak şekilde).
@@ -49,6 +53,7 @@ import requests
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
+COMMENTS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
 
 DEFAULT_CATEGORY_ID = "28"
 TARGET_PUBLISH_HOUR_TR = 21  # Hedef yayın saati (Türkiye saati) - global (ABD/İngiltere) İngilizce kitle için optimize edildi
@@ -57,6 +62,10 @@ FALLBACK_HASHTAGS = ["#GamingScience", "#TechMysteries", "#GamingFacts", "#Gamin
 
 MIN_CHAPTERS = 3
 MIN_CHAPTER_GAP_SECONDS = 10
+
+USED_COMMENTS_FILE = "used_comments.json"
+MAX_COMMENTS_IN_PROMPT = 30
+MIN_COMMENT_SCORE = 7
 
 DESCRIPTION_BODY = (
     "{title}\n\n"
@@ -146,17 +155,13 @@ def build_sources_block(sources: list) -> str:
 
 def split_script_sections(script_text: str) -> list:
     """script.md'yi bölüm bazlı böler (script_prompt.md'nin ürettiği
-    hali: bölümler SADECE boş satırla ayrılmış). generate_scenes.py'nin
-    cümle-bazlı bölmesinden FARKLI - burada amaç bölüm/konu sınırları,
-    tek tek cümleler değil."""
+    hali: bölümler SADECE boş satırla ayrılmış)."""
     return [s.strip() for s in re.split(r"\n{2,}", script_text) if s.strip()]
 
 
 def generate_chapter_titles(client, sections: list):
     """Her bölüm için kısa (3-5 kelime) bir başlık üretir. Başarısız
-    olursa ya da bölüm sayısıyla eşleşmezse None döner - çağıran taraf
-    chapters bloğunu tamamen atlar, hatalı/eksik bir liste asla
-    kullanılmaz."""
+    olursa ya da bölüm sayısıyla eşleşmezse None döner."""
     joined = "\n---\n".join(f"[{i}] {s[:400]}" for i, s in enumerate(sections))
     prompt = f"""Aşağıda bir YouTube videosunun bölümleri (paragraflar)
 var. Her biri için, o bölümde ANLATILAN konuyu özetleyen KISA (3-5
@@ -207,12 +212,7 @@ def format_chapter_timestamp(seconds: float) -> str:
 
 def compute_chapter_timestamps(sections: list, alignment_words: list):
     """Her bölümün başladığı zamanı, script'teki kelime konumunu sesin
-    toplam süresine ORANTILI olarak eşleyerek tahmin eder. Whisper'ın
-    algıladığı kelime sayısı script'teki kelime sayısıyla birebir
-    tutmayabilir - bu yüzden alignment listesine index ile girmek
-    yerine, kelime konumunu bir ORAN olarak alıp o oranı toplam ses
-    süresine uyguluyoruz. Bu, küçük kelime sayısı farklarına karşı
-    çok daha dayanıklı."""
+    toplam süresine ORANTILI olarak eşleyerek tahmin eder."""
     if not alignment_words or not sections:
         return []
 
@@ -231,15 +231,12 @@ def compute_chapter_timestamps(sections: list, alignment_words: list):
         timestamps.append(fraction * total_duration)
         cumulative += len(section.split())
 
-    timestamps[0] = 0.0  # YouTube chapters kuralı: ilk zaman damgası KESİNLİKLE 0:00 olmalı
+    timestamps[0] = 0.0
     return timestamps
 
 
 def build_chapters_block(sections: list, titles, timestamps: list) -> str:
-    """YouTube'un chapters kurallarını (en az 3 bölüm, ilk 0:00,
-    ardışık bölümler arası en az 10sn) sağlamıyorsa boş string döner -
-    kurallara uymayan bir liste YouTube'da hiç görünmez/aktifleşmez,
-    o yüzden uymuyorsa hiç eklememek en güvenlisi."""
+    """YouTube'un chapters kurallarını sağlamıyorsa boş string döner."""
     if not titles or len(titles) != len(sections) or len(timestamps) != len(sections):
         return ""
     if len(sections) < MIN_CHAPTERS:
@@ -256,6 +253,103 @@ def build_chapters_block(sections: list, titles, timestamps: list) -> str:
         for t, title in zip(timestamps, titles)
     ]
     return "\n".join(lines)
+
+
+def load_used_comments() -> list:
+    if not os.path.exists(USED_COMMENTS_FILE):
+        return []
+    try:
+        with open(USED_COMMENTS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_used_comments(comments: list):
+    with open(USED_COMMENTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(comments, f, ensure_ascii=False, indent=2)
+
+
+def generate_pinned_comment(client, script_text: str, used_comments: list):
+    """Script'e özel, tartışma açan, özgün 5 aday yorum üretir, her
+    birini kendi içinde puanlar, en yüksek puanlıyı (>=MIN_COMMENT_SCORE
+    şartıyla) döner. Uygun aday yoksa ya da hata olursa None döner -
+    çağıran taraf yorum atmadan devam eder, pipeline kırılmaz."""
+    avoid_block = ""
+    if used_comments:
+        recent = used_comments[-MAX_COMMENTS_IN_PROMPT:]
+        avoid_block = (
+            "\n\nDAHA ÖNCE KULLANILAN YORUMLAR (bunlara BENZER, aynı kalıpta "
+            "bir yorum ÜRETME, tamamen farklı bir açı/soru bul):\n"
+            + "\n".join(f"- {c}" for c in recent)
+        )
+
+    prompt = f"""Bu YouTube videosunun script'ine göre, videonun ALTINA
+sabitlenecek (pinned comment) bir yorum üreteceksin. Amaç izleyicileri
+gerçekten düşünmeye ve YANIT VERMEYE zorlamak - klasik "ne düşünüyorsun?"
+gibi basit/klişe sorular DEĞİL, script'teki spesifik bir detaya dayanan,
+tartışma açan, biraz iddialı ya da beklenmedik bir açı sunan sorular.
+
+SCRIPT (ilk 2000 karakter):
+{script_text[:2000]}
+{avoid_block}
+
+5 farklı aday yorum üret, her biri script'in FARKLI bir anına/detayına
+odaklansın, birbirine benzemesin. Her biri için kendi kendine 1-10
+arası puan ver (kriter: özgünlük, script'e özgülük, ne kadar gerçek
+tartışma/yanıt tetikleyeceği - klişe/genel sorular düşük puan alsın).
+
+Çıktı SADECE JSON dizi, 5 eleman:
+[{{"comment": "...", "score": 8}}, ...]"""
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text")
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        candidates = json.loads(cleaned)
+        if not isinstance(candidates, list) or not candidates:
+            return None
+
+        best = max(candidates, key=lambda c: c.get("score", 0))
+        if best.get("score", 0) >= MIN_COMMENT_SCORE:
+            return best.get("comment", "").strip()
+    except Exception as e:
+        print(f"  UYARI: yorum üretimi başarısız ({type(e).__name__})")
+    return None
+
+
+def post_and_pin_comment(access_token: str, video_id: str, comment_text: str):
+    """Yorumu kanal sahibi olarak atar (kanal sahibinin yorumu YouTube
+    tarafından otomatik üstte gösterilir, ekstra pin işlemi gerekmez).
+    Başarısız olursa sessizce loglar, upload süreci ASLA bu yüzden
+    kesilmez."""
+    try:
+        resp = requests.post(
+            f"{COMMENTS_URL}?part=snippet",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {"textOriginal": comment_text}
+                    },
+                }
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        print(f"Yorum atıldı ve sabitlendi: \"{comment_text}\"")
+        return True
+    except requests.RequestException as e:
+        print(f"  UYARI: yorum atılamadı ({type(e).__name__}), video yine de yayında kalır")
+        return False
 
 
 def build_tags_within_limit(tags: list, limit: int = 480) -> list:
@@ -368,7 +462,7 @@ def main():
     parser.add_argument("--titles", required=True)
     parser.add_argument("--thumbnail", required=False, default=None)
     parser.add_argument("--script", required=False, default="script.md",
-                         help="Chapters (bölüm zaman damgaları) üretmek için kaynak script")
+                         help="Chapters (bölüm zaman damgaları) ve sabitlenmiş yorum için kaynak script")
     parser.add_argument("--facts", required=False, default="facts.json",
                          help="Sources (kaynaklar) bloğu için facts.json yolu")
     parser.add_argument("--alignment", required=False, default="audio/alignment.json",
@@ -385,6 +479,7 @@ def main():
     print(f"Üretilen hashtag'ler: {' '.join(hashtags)}")
 
     extra_blocks = []
+    script_text = ""
 
     if os.path.exists(args.script):
         with open(args.script, "r", encoding="utf-8") as f:
@@ -437,6 +532,17 @@ def main():
         print("Kapak ayarlanıyor...")
         set_thumbnail(access_token, video_id, args.thumbnail)
         print("Kapak ayarlandı.")
+
+    if script_text:
+        used_comments = load_used_comments()
+        pinned_comment = generate_pinned_comment(client, script_text, used_comments)
+        if pinned_comment:
+            posted = post_and_pin_comment(access_token, video_id, pinned_comment)
+            if posted:
+                used_comments.append(pinned_comment)
+                save_used_comments(used_comments)
+        else:
+            print("  UYARI: yeterli puanlı yorum üretilemedi, yorum atlanıyor")
 
     if publish_at:
         print(f"\nTAMAMLANDI. Video {TARGET_PUBLISH_HOUR_TR}:00 TR saatinde otomatik yayına girecek.")
