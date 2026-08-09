@@ -4,11 +4,20 @@ Tam otomatik script üretimi + kalite kontrol döngüsü.
 Akış:
   1. Claude, facts.json + niche.md kullanarak taslak script yazar
   2. İkinci bir Claude çağrısı script'i eleştirir (hook gücü, kaynak
-     kullanımı, evergreen kuralına uyum, doğallık) ve 1-10 puan verir
+     kullanımı, evergreen kuralına uyum, doğallık, İLK ÖNİZLEME-ÖDÜLÜ VE
+     PERİYODİK ÖDÜL RİTMİ) ve 1-10 puan verir
   3. Puan 7'nin altındaysa, eleştiriyi kullanarak script yeniden yazılır
      (en fazla 2 tur, sonsuz döngüye girmesin)
   4. Son olarak, script.md'ye yazmadan önce her türlü markdown başlığı/
      zaman damgası temizlenir
+
+RETENTION GÜNCELLEMESİ: Ortalama izlenme süresinin videonun ilk
+2-2.5 dakikasında düştüğü gözlemlendi. Buna karşılık script_prompt.md'ye
+(1) hook'tan hemen sonra sonun kısa bir önizlemesi + ilk 90 saniyede
+küçük bir "ilk ödül" bulgusu, (2) videonun geri kalanında YAKLAŞIK HER
+2-2.5 DAKİKADA BİR tekrar eden küçük mini-reveal'lar kuralı eklendi.
+critique_script bu ikisinin script'te GERÇEKTEN uygulanıp uygulanmadığını
+da artık kontrol ediyor (bkz. kriter 7-8).
 
 Her Claude API çağrısı geçici hatalara (500, rate limit, bağlantı
 kopması) karşı otomatik olarak yeniden dener (bkz. call_claude).
@@ -153,6 +162,18 @@ def critique_script(client, niche, script):
 6. Script'te markdown başlığı (#), bölüm etiketi veya zaman damgası
    ([0:45-4:00] gibi) VAR MI? Varsa mutlaka feedback'te belirt, bunlar
    asla olmamalı.
+7. RETENTION - AÇILIŞ ÖNİZLEMESİ: Hook'tan (ilk 15sn) hemen sonra,
+   script DOĞRUDAN soyut bir arka plan/tarihçe/tanım anlatımına mı
+   geçiyor (KÖTÜ - izleyici kaybı riski yüksek), yoksa hook'tan sonraki
+   birkaç cümlede sonun kısa bir önizlemesi/ipucu var mı VE ilk ~90
+   saniye içinde somut, küçük bir ilk bulgu/"aha" anı veriliyor mu
+   (İYİ)? Yoksa mutlaka feedback'te belirt.
+8. RETENTION - PERİYODİK ÖDÜL RİTMİ: Script'in TAMAMI boyunca (sadece
+   başında değil), yaklaşık her 300-350 kelimede bir (≈2-2.5 dakika)
+   küçük bir mini-reveal/şaşırtıcı detay/alt-merak açığı çözümü var mı,
+   yoksa bazı bölümler (özellikle ortada) uzun, düz, ödülsüz bir bağlam/
+   dolgu bloğu gibi mi duruyor? Düz/ödülsüz uzun bir bölüm varsa mutlaka
+   feedback'te hangi bölüm olduğunu belirt.
 
 NİŞ: {niche}
 
