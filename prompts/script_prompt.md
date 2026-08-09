@@ -49,6 +49,33 @@ Kurallar:
   değer olduğuna dair tek, samimi bir cümle).
 - Hiçbir güncel olaya, tarihe veya turnuvaya referans verme (evergreen
   olmalı).
+- KRİTİK - İLK 15 SANİYE İLE İLK 2-2.5 DAKİKA ARASI (izleyici kaybı bu
+  aralıkta en yüksek olur): Hook'tan hemen sonra DOĞRUDAN arka plan/
+  tarihçe/bağlam anlatımına GEÇME - bu geçiş izleyicinin hook'ta
+  hissettiği merakı söndürür. Bunun yerine, hook'tan sonraki İLK 2-3
+  CÜMLEDE, videonun ilerleyen kısmında ortaya çıkacak en çarpıcı
+  detay/sonucun KISA BİR ÖNİZLEMESİNİ ver (cevabı vermeden, sadece
+  "bunu öğrenmeden ayrılma" hissi yaratan bir ipucu - ör. "by the end
+  of this, you'll understand why X is still talked about", "and the
+  reason will completely change how you see Y"). Bu önizlemeden sonra
+  bağlama geçebilirsin, ama bağlam/kurulum bölümünü KISA VE YOĞUN tut -
+  ilk 90 saniye içinde izleyiciye somut, ilginç, KÜÇÜK bir ilk bulgu/
+  detay/"aha" anı vermiş ol (asıl büyük cevap değil, ama izleyicinin
+  "bu video gerçekten bir şey anlatıyor" hissetmesini sağlayan küçük
+  bir ödül). Tamamen soyut/genel bir tarihçe/tanım bloğuyla açma.
+- KRİTİK - PERİYODİK ÖDÜL MEKANİZMASI (video boyunca tekrar et, tek
+  seferlik değil): Yukarıdaki ilk ödülden sonra, videonun GERİ KALANI
+  boyunca YAKLAŞIK HER 2-2.5 DAKİKADA BİR (okunan metinde ~300-350
+  kelimede bir gibi düşün) izleyiciye küçük, somut, kendi içinde tatmin
+  edici bir "mini-reveal" ver - şaşırtıcı bir istatistik, beklenmedik
+  bir bağlantı, ufak bir "aslında..." dönüşü, ya da "ve işte burada işler
+  garipleşiyor" tarzı bir alt-merak açığının çözümü. Bu mini-ödüller
+  ASIL BÜYÜK CEVABI harcamaz, onun etrafındaki yan-bulguları/detayları
+  kullanır. Amaç: izleyicinin "birazdan yine ilginç bir şey öğreneceğim"
+  hissiyle her 2-2.5 dakikada bir yeniden bağlanması, hiçbir bölümün
+  düz/yavaş/sadece-bağlam-dolgusu gibi hissettirmemesi. Zihinsel model:
+  video, tek bir büyük merak açığı değil, ritmik aralıklarla küçük
+  ödüller veren, izleyiciyi sürekli ileri çeken bir ZİNCİR gibi kurulsun.
 - SAYILAR: Tüm sayıları rakamla değil YAZIYLA yaz ("90" değil "ninety",
   "1994" değil "nineteen ninety-four", "40, 60, 80 hours" değil "forty,
   sixty, eighty hours"). Sesli okuma (TTS) rakamları bazen yanlış telaffuz
