@@ -20,9 +20,16 @@ Açıklamaya, VİDEOYA ÖZEL 5 hashtag eklenir (Claude ile, başlığa göre
   - Chapters (bölüm zaman damgaları): script.md'nin bölümlerini,
     sesin toplam süresine ORANTILI konumlandırarak zaman damgalarına
     çevirir, her bölüm için Claude ile kısa bir başlık üretir.
-    YouTube'un chapter kuralları sağlanmıyorsa blok TAMAMEN ATLANIR.
+    Paragraf sayısı MIN_CHAPTERS'ın altındaysa (en sık atlanma sebebi),
+    rebalance_sections_for_chapters cümle sınırlarına saygılı şekilde
+    script'i yeniden dengeler - YouTube'un chapter kuralları hâlâ
+    sağlanmıyorsa (çok kısa script gibi istisnai durumlarda) blok
+    TAMAMEN ATLANIR.
   - Sources (kaynaklar): facts.json'daki her fact'in "source" alanı,
-    tekilleştirilip listelenir.
+    tekilleştirilip listelenir. facts.json'da hiç kaynak yoksa,
+    find_fallback_sources web araması ile 2-4 GERÇEK genel kaynak
+    bulmayı dener - hiçbir zaman sahte/uydurma kaynak ÜRETİLMEZ, yedek
+    arama da sonuçsuz kalırsa blok yine atlanır.
 
 SABİTLENMİŞ YORUM: Video yüklendikten sonra, script'e özel 5 aday
 yorum üretilir (Claude ile), her biri kendi içinde 1-10 puanlanır
@@ -153,10 +160,90 @@ def build_sources_block(sources: list) -> str:
     return f"Sources referenced in this video:\n{lines}"
 
 
+# facts.json'da kaynak yoksa devreye giren yedek arama.
+WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search"}]
+
+
+def find_fallback_sources(client, title: str, script_text: str) -> list:
+    """facts.json'da hiç kaynak yoksa devreye giren yedek mekanizma:
+    web araması yaparak video konusuyla ilgili 2-4 GERÇEK, doğrulanmış
+    genel kaynak bulmaya çalışır. Bulamazsa/hata olursa boş liste döner
+    - sahte kaynak ASLA üretilmez, o durumda sources bloğu yine boş
+    kalır (bu, yanlış/uydurma kaynak göstermekten HER ZAMAN daha iyi)."""
+    prompt = f"""Bu YouTube videosunun konusu hakkında, gerçekten var
+olan ve web aramasıyla doğrulayabildiğin 2-4 tane GÜVENİLİR genel
+kaynak (makale, ansiklopedi sayfası, resmi kurum sayfası vb.) bul.
+
+BAŞLIK: {title}
+
+SCRIPT (ilk 1500 karakter, bağlam için):
+{script_text[:1500]}
+
+KURAL: Sadece web aramasıyla GERÇEKTEN bulduğun, var olduğunu
+doğruladığın kaynakları listele. Emin olmadığın hiçbir kaynağı
+uydurma - bulamazsan boş liste döndür, bu kabul edilebilir bir sonuç.
+
+Çıktı SADECE JSON dizi (kaynak adı + yayıncı/site formatında, kısa):
+["Kaynak 1 - Site/Yayıncı adı", "Kaynak 2 - Site/Yayıncı adı"]
+Hiç kaynak bulamazsan: []"""
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=500,
+            tools=WEB_SEARCH_TOOL,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text")
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        sources = json.loads(cleaned)
+        if isinstance(sources, list):
+            return [str(s).strip() for s in sources if str(s).strip()][:4]
+    except Exception as e:
+        print(f"  UYARI: yedek kaynak araması başarısız ({type(e).__name__})")
+    return []
+
+
 def split_script_sections(script_text: str) -> list:
     """script.md'yi bölüm bazlı böler (script_prompt.md'nin ürettiği
     hali: bölümler SADECE boş satırla ayrılmış)."""
     return [s.strip() for s in re.split(r"\n{2,}", script_text) if s.strip()]
+
+
+def split_into_sentences(text: str) -> list:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
+
+def rebalance_sections_for_chapters(sections: list, min_chapters: int = MIN_CHAPTERS) -> list:
+    """Paragraf sayısı MIN_CHAPTERS'ın altındaysa (chapters bloğunun
+    ATLANMASINA yol açan en sık sebep), script'i cümle sınırlarına
+    saygılı şekilde yaklaşık eşit parçalara yeniden böler. Bu, YouTube'un
+    kuralını gevşetmiyor - sadece bizim paragraf-bazlı bölme mantığımızın
+    gereksiz yere fazla atlamasını önlüyor. Yeterli cümle yoksa (çok kısa
+    script) olduğu gibi bırakır - chapters o durumda haklı olarak atlanır."""
+    if len(sections) >= min_chapters:
+        return sections
+
+    full_text = "\n\n".join(sections)
+    sentences = split_into_sentences(full_text)
+    if len(sentences) < min_chapters:
+        return sections
+
+    total_words = sum(len(s.split()) for s in sentences)
+    if total_words == 0:
+        return sections
+    target_words = total_words / min_chapters
+
+    new_sections, current, current_words = [], [], 0
+    for sentence in sentences:
+        current.append(sentence)
+        current_words += len(sentence.split())
+        if current_words >= target_words and len(new_sections) < min_chapters - 1:
+            new_sections.append(" ".join(current))
+            current, current_words = [], 0
+    if current:
+        new_sections.append(" ".join(current))
+
+    return new_sections if len(new_sections) >= min_chapters else sections
 
 
 def generate_chapter_titles(client, sections: list):
@@ -485,6 +572,7 @@ def main():
         with open(args.script, "r", encoding="utf-8") as f:
             script_text = f.read()
         sections = split_script_sections(script_text)
+        sections = rebalance_sections_for_chapters(sections)
         alignment_words = load_alignment_words(args.alignment)
         timestamps = compute_chapter_timestamps(sections, alignment_words)
         chapter_titles = generate_chapter_titles(client, sections) if timestamps else None
@@ -496,12 +584,17 @@ def main():
             print("  UYARI: chapters bloğu için yeterli/uyumlu veri yok, atlanıyor.")
 
     sources = load_facts_sources(args.facts)
+    if not sources and script_text:
+        print("  facts.json'da kaynak yok, yedek web araması deneniyor...")
+        sources = find_fallback_sources(client, title, script_text)
+        if sources:
+            print(f"  Yedek aramada {len(sources)} kaynak bulundu.")
     sources_block = build_sources_block(sources)
     if sources_block:
         extra_blocks.append(sources_block)
         print(f"{len(sources)} kaynak açıklamaya eklendi.")
     else:
-        print("  UYARI: kaynak bulunamadı, sources bloğu atlanıyor.")
+        print("  UYARI: kaynak bulunamadı (birincil + yedek aramada), sources bloğu atlanıyor.")
 
     extra_text = ("\n\n" + "\n\n".join(extra_blocks)) if extra_blocks else ""
     description = (
