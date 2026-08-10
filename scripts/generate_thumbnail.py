@@ -10,11 +10,14 @@ asıl cevabı verir. Bu yüzden kapak için Claude'dan başlıktan bağımsız,
 daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
 
 TREND REFERANSI (--trends verilirse): trend_analysis.py'nin çektiği
-nişte GERÇEKTEN tutan videoların BAŞLIKLARI (görselleri DEĞİL - telif
-riski olmasın diye sadece metin kalıpları) bağlam olarak Claude'a
-veriliyor. Amaç birebir kopyalamak değil, "bu nişte şu enerji/ton işe
-yarıyor" sinyalini kapak konseptine yansıtmak - hâlâ tamamen orijinal
-bir görsel/metin üretiliyor.
+nişte GERÇEKTEN tutan videoların BAŞLIKLARI (metin kalıpları) VE
+KAPAK GÖRSELLERİ (gerçek, indirilip Claude'a vision ile gösterilen
+JPEG'ler) bağlam olarak kullanılıyor. Amaç birebir kopyalamak değil,
+"bu nişte şu enerji/ton/stil işe yarıyor" sinyalini kapak konseptine
+yansıtmak - hem başlık hem görsel için, hâlâ tamamen orijinal bir
+görsel/metin üretiliyor. Kapak görselleri sadece SOYUT PATERN (kontrast,
+renk, kompozisyon) çıkarmak için kullanılır, hiçbir spesifik nesne/
+logo/kişi kopyalanmaz (bkz. analyze_thumbnail_patterns).
 
 NOT: YouTube'un native A/B testi (Test & Compare) API'den erişilemiyor
 ve YPP üyeliği gerektiriyor, bu yüzden sistem artık çoklu kapak yerine
@@ -54,6 +57,7 @@ import textwrap
 import time
 
 import anthropic
+import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from wiro_client import run_model, download_output
@@ -90,14 +94,20 @@ BORDER_WIDTH = 4  # piksel
 TEXT_COLOR_PALETTE = [
     (255, 255, 255),  # beyaz - klasik, her zaman okunaklı
     (255, 214, 0),    # sarı - dikkat çekici, gizem/uyarı hissi
-    (255, 59, 48),    # kırmızı - dramatik, acil/şok hissi
 ]
+# NOT: Kırmızı BİLEREK metin paletinden çıkarıldı - artık EMPHASIS_COLOR
+# ile aynı renk olurdu (vurgu halkası da kırmızı), bu da metin ile
+# vurgu halkasının görsel olarak birbirine karışmasına/çakışmasına
+# yol açıyordu (VidIQ kapak puanı bunu doğruladı: 26/100). Artık net
+# bir hiyerarşi var: KIRMIZI = "buraya bak" (nesne vurgusu),
+# BEYAZ/SARI = "bunu oku" (metin) - ikisi asla aynı anda kırmızı olmaz.
 
 # Kırmızı vurgu elementinin (halka/ok) rengi - nesnenin kritik
 # noktasını işaret eder, izleyicinin bakışını konuya kilitler.
 EMPHASIS_COLOR = (230, 30, 30)
 
 MAX_TREND_TITLES = 8  # prompt'a en fazla kaç trend başlığı eklensin
+MAX_TREND_THUMBNAILS = 3  # görsel patern analizine en fazla kaç gerçek kapak verilsin
 
 
 def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
@@ -123,6 +133,82 @@ def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
     raise last_error
 
 
+def load_trend_thumbnail_urls(trends_path: str) -> list:
+    """trend_analysis.py çıktısından, en çok izlenen videoların GERÇEK
+    kapak görseli URL'lerini çıkarır (en fazla MAX_TREND_THUMBNAILS
+    kadar). Dosya yoksa/boşsa/URL yoksa boş liste döner - pipeline
+    kırılmaz, çağıran taraf stil analizini atlar."""
+    if not trends_path or not os.path.exists(trends_path):
+        return []
+    try:
+        with open(trends_path, "r", encoding="utf-8") as f:
+            trend_data = json.load(f)
+        if not isinstance(trend_data, list):
+            return []
+        sorted_data = sorted(trend_data, key=lambda v: v.get("views", 0), reverse=True)
+        urls = [v["thumbnail_url"] for v in sorted_data if v.get("thumbnail_url")]
+        return urls[:MAX_TREND_THUMBNAILS]
+    except (json.JSONDecodeError, OSError, KeyError, TypeError):
+        return []
+
+
+def analyze_thumbnail_patterns(client, thumbnail_urls: list):
+    """Nişte gerçekten yüksek performans göstermiş kapakları Claude'a
+    (vision) gösterip SADECE soyut stil/kompozisyon paternini (kontrast,
+    renk paleti, konu yerleşimi, ışık) çıkarttırır. Claude'a AÇIKÇA
+    hiçbir görseli/nesneyi/logoyu/kişiyi birebir tarif etmemesi, sadece
+    genel eğilimi özetlemesi söylenir - bu, üretilecek YENİ görsele
+    kopya değil sadece stil sinyali olarak yansıtılır (tıpkı trend
+    başlıklarının kullanılma şekli gibi). Görsellerden biri/hepsi
+    indirilemezse ya da analiz başarısız olursa None döner - kapak
+    üretimi bu referans olmadan normal şekilde devam eder."""
+    if not thumbnail_urls:
+        return None
+
+    image_blocks = []
+    for url in thumbnail_urls:
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            image_b64 = base64.standard_b64encode(resp.content).decode("utf-8")
+            image_blocks.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64},
+            })
+        except Exception:
+            continue  # bu görsel indirilemedi, diğerleriyle devam
+
+    if not image_blocks:
+        return None
+
+    prompt_text = (
+        "Bu görseller, bu nişte GERÇEKTEN yüksek izlenme almış YouTube "
+        "kapaklarıdır. SADECE soyut, genel görsel PATERNLERİ çıkar: "
+        "kompozisyon (konu nerede duruyor, kaç öğe var), kontrast "
+        "seviyesi, renk paleti eğilimi, ışıklandırma tarzı, metin "
+        "kullanımı var mı/nasıl. KESİNLİKLE şunları YAPMA: hiçbir "
+        "spesifik nesneyi, markayı, logoyu, kişiyi ya da sahneyi tarif "
+        "etme/kopyalama - amaç bu görselleri ya da içeriklerini "
+        "yeniden üretmek DEĞİL, sadece hangi GENEL stilin bu nişte işe "
+        "yaradığını anlamak.\n\n"
+        "Çıktı SADECE 2-3 cümlelik bir stil özeti, düz metin (JSON değil)."
+    )
+    try:
+        response = client.messages.create(
+            model=MODEL_CREATIVE,
+            max_tokens=250,
+            messages=[{
+                "role": "user",
+                "content": image_blocks + [{"type": "text", "text": prompt_text}],
+            }],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text")
+        return raw.strip() or None
+    except Exception as e:
+        print(f"  UYARI: kapak stil analizi başarısız ({type(e).__name__}), atlanıyor")
+        return None
+
+
 def load_trend_titles(trends_path: str) -> list:
     """trend_analysis.py çıktısından SADECE başlıkları (görsel/link
     değil) çıkarır - en çok izlenen ilk MAX_TREND_TITLES kadarını.
@@ -140,7 +226,7 @@ def load_trend_titles(trends_path: str) -> list:
 
 
 def generate_thumbnail_concept(client, title: str, script_excerpt: str,
-                                trend_titles: list) -> dict:
+                                trend_titles: list, style_summary: str = None) -> dict:
     """
     Başlıktan BAĞIMSIZ bir kapak konsepti üretir: bir görsel açıklama
     (image prompt), çok kısa bir kışkırtıcı metin (hook text) VE kırmızı
@@ -156,6 +242,16 @@ def generate_thumbnail_concept(client, title: str, script_excerpt: str,
             + "\n".join(f"- {t}" for t in trend_titles)
         )
 
+    style_block = ""
+    if style_summary:
+        style_block = (
+            "\n\nBU NİŞTE GERÇEKTEN YÜKSEK PERFORMANS GÖSTERMİŞ KAPAKLARIN "
+            "GENEL STİL ÖZETİ (gerçek görsellerden çıkarılmış, sadece "
+            "PATERN - hiçbir spesifik görseli kopyalama, sadece bu genel "
+            "stil eğilimini kendi özgün visual_prompt'una yansıt):\n"
+            + style_summary
+        )
+
     prompt = f"""Bir YouTube kapak görseli (thumbnail) konsepti üret.
 
 KESİN KURAL: Bu kapak, aşağıdaki başlıkla AYNI bilgiyi VERMEMELİ.
@@ -168,6 +264,7 @@ BAŞLIK (kapakta bunu tekrar etme, bundan bağımsız düşün): {title}
 SCRIPT'TEN KISA ALINTI (konunun özünü anlamak için, kapak metnine
 doğrudan kopyalama): {script_excerpt[:800]}
 {trend_block}
+{style_block}
 
 Üret:
 1. "visual_prompt": İngilizce, somut, TEK BİR NESNEYE/DETAYA odaklanan
@@ -412,7 +509,16 @@ def main():
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    concept = generate_thumbnail_concept(client, title, script_excerpt, trend_titles)
+    trend_thumbnail_urls = load_trend_thumbnail_urls(args.trends)
+    style_summary = None
+    if trend_thumbnail_urls:
+        style_summary = analyze_thumbnail_patterns(client, trend_thumbnail_urls)
+        if style_summary:
+            print(f"  {len(trend_thumbnail_urls)} gerçek kapaktan stil paterni çıkarıldı: {style_summary[:100]}...")
+        else:
+            print("  Kapak stil analizi başarısız/boş, referanssız devam ediliyor")
+
+    concept = generate_thumbnail_concept(client, title, script_excerpt, trend_titles, style_summary)
 
     raw_path = os.path.join(args.out_dir, "raw_1.png")
     generate_background(concept["visual_prompt"], raw_path)
