@@ -31,5 +31,48 @@
       "museum display"
     ],
     "file": "assets/scene_library/5d47f1af5ac5.png"
+  },
+  {
+    "tags": [
+      "excavation",
+      "buried cartridges",
+      "archaeological dig",
+      "desert site",
+      "discovery",
+      "vintage gaming artifacts"
+    ],
+    "file": "assets/scene_library/c172da29b30f.png"
+  },
+  {
+    "tags": [
+      "retro robot",
+      "vintage toy",
+      "1980s gaming",
+      "plastic figure",
+      "mechanical design"
+    ],
+    "file": "assets/scene_library/8b0f3fa5200f.png"
+  },
+  {
+    "tags": [
+      "microchip",
+      "circuit board",
+      "embedded hardware",
+      "security chip",
+      "electronic component",
+      "close-up technology"
+    ],
+    "file": "assets/scene_library/ef34f2d6cd49.png"
+  },
+  {
+    "tags": [
+      "official seal",
+      "certification badge",
+      "product packaging",
+      "text comparison",
+      "retro gaming",
+      "quality assurance"
+    ],
+    "file": "assets/scene_library/e202429eb127.png"
   }
 ]
