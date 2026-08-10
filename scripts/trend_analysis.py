@@ -6,6 +6,13 @@ trend.json'a kaydeder. Bu dosya sonra generate_script.py ve
 generate_thumbnail.py tarafından "şu an gerçekten patlayan formatlar"
 referansı olarak kullanılır.
 
+KAPAK GÖRSELİ REFERANSI: Her kaydedilen videonun GERÇEK kapak görseli
+URL'i de (thumbnail_url) tutuluyor - generate_thumbnail.py bunları
+Claude'a (vision) gösterip SADECE stil/kompozisyon paternini
+(kontrast, renk, konu yerleşimi) çıkarıyor, hiçbir görseli birebir
+kopyalamıyor. Detaylar için generate_thumbnail.py'deki
+analyze_thumbnail_patterns fonksiyonuna bakın.
+
 NEDEN SABİT KANAL LİSTESİ DEĞİL: Sabit bir rakip kanal listesi zamanla
 hep aynı sonuçları getirir (tekrar riski). Bunun yerine, HER KOŞUDA
 Claude o videonun konusuna özel 1-3 arama terimi üretir, bu terimlerle
@@ -135,6 +142,18 @@ def search_video_ids(query: str, api_key: str, published_after: str = None,
         return []
 
 
+def extract_thumbnail_url(snippet: dict) -> str:
+    """Snippet içindeki thumbnails objesinden en yüksek çözünürlüklü
+    URL'i çıkarır (maxres > high > medium > default). Hiçbiri yoksa
+    boş string döner - pipeline kırılmaz."""
+    thumbs = snippet.get("thumbnails", {})
+    for quality in ("maxres", "high", "medium", "default"):
+        url = thumbs.get(quality, {}).get("url", "")
+        if url:
+            return url
+    return ""
+
+
 def fetch_stats(video_ids: list, api_key: str, source_label: str) -> list:
     """Video ID listesinden gerçek istatistikleri çeker, her kayda
     'source' etiketi ekler."""
@@ -158,6 +177,7 @@ def fetch_stats(video_ids: list, api_key: str, source_label: str) -> list:
                     "views": int(item["statistics"].get("viewCount", 0)),
                     "likes": int(item["statistics"].get("likeCount", 0)),
                     "duration": item["contentDetails"]["duration"],
+                    "thumbnail_url": extract_thumbnail_url(item["snippet"]),
                     "source": source_label,
                 })
         except requests.RequestException as e:
