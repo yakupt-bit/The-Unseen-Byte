@@ -10,36 +10,33 @@ name: Produce Video (fully automated)
 # actions/upload-artifact ile kaydeder, bir sonraki job bunu
 # actions/download-artifact ile indirip kaldığı yerden devam eder.
 #
-# NEDEN: Tek job'da bir adım (ör. altyazı gömme) patlarsa, GitHub'ın
-# "Re-run" özelliği TÜM job'ı (ses üretimi, görsel üretimi dahil,
-# hepsi PARALI API çağrıları) sıfırdan çalıştırır - bu para ve zaman
-# israfıdır. Job'lar ayrıysa, GitHub'ın "Re-run failed jobs" özelliği
-# SADECE başarısız olan job'ı (ve ondan sonrakileri) yeniden çalıştırır;
-# başarılı olan önceki job'ların Artifact'leri OLDUĞU GİBİ kullanılır,
-# o adımlar tekrar ücret ödemeden atlanır.
+# NEDEN: Tek job'da bir adım patlarsa, GitHub'ın "Re-run" özelliği TÜM
+# job'ı sıfırdan çalıştırır - para/zaman israfı. Job'lar ayrıysa,
+# "Re-run failed jobs" SADECE başarısız olanı (ve sonrakileri) yeniden
+# çalıştırır; önceki başarılı job'ların Artifact'leri OLDUĞU GİBİ
+# kullanılır.
 #
-# Araştırma+script+başlık+niş-kontrolü döngüsü (2-4.5) BİLEREK tek job
-# içinde kaldı - sadece metin API çağrıları kullanır (Wiro/render gibi
-# pahalı/parasal bir maliyeti yok), bölmenin getirisi düşük.
+# HER JOB KENDİ BAĞIMSIZ ORTAMINDA ÇALIŞIR: bu yüzden her job, ihtiyaç
+# duyduğu HER ŞEYİ (pip paketleri, ffmpeg gibi sistem paketleri) kendi
+# içinde ayrı ayrı kurmak ZORUNDADIR - önceki job'da kurulan hiçbir şey
+# sonrakine miras kalmaz. Bu dosyada ffmpeg gerektiren HER job'a
+# (voiceover, align_subtitles, music_mix, scene_images, assemble_video,
+# burn_subtitles) ffmpeg kurulumu ayrı ayrı eklenmiştir.
 #
-# MODEL NOTU: research.py ve generate_script.py hâlâ Claude (ANTHROPIC_
-# API_KEY) kullanıyor. generate_titles.py ve generate_thumbnail.py
-# artık Gemini (GEMINI_API_KEY) kullanıyor - kapak üretimi ayrıca
-# gemini-3-pro-image ile, Wiro'ya artık kapak için ihtiyaç yok (sahne
-# görselleri hâlâ Wiro'da).
+# MODEL NOTU: research.py ve generate_script.py Claude (ANTHROPIC_API_KEY)
+# kullanıyor. generate_titles.py ve generate_thumbnail.py Gemini
+# (GEMINI_API_KEY) kullanıyor - kapak üretimi gemini-2.5-flash-image ile
+# (gemini-3-pro-image ücretsiz katmanda kullanılamıyor, kotası sıfır).
+# Sahne görselleri (generate_scenes.py) hâlâ Wiro kullanıyor.
 #
 # Zamanlama SADECE cron-job.org üzerinden yönetiliyor (haftada 3 gün,
-# 11:00 Türkiye saati - pipeline'a tampon süre vermek için).
-# GitHub'ın kendi dahili "schedule" tetikleyicisi BİLEREK yok.
-# Video ise upload_youtube.py sayesinde YouTube'un kendi zamanlı
-# yayın özelliğiyle tam 17:00 TR'de otomatik yayına giriyor (ya da
-# pipeline 17:00'i geçtikten sonra biterse hemen herkese açık olarak
-# yayınlanıyor).
+# 11:00 Türkiye saati). GitHub'ın kendi "schedule" tetikleyicisi
+# BİLEREK yok. Video, upload_youtube.py sayesinde YouTube'un kendi
+# zamanlı yayın özelliğiyle 17:00 TR'de otomatik yayına giriyor.
 #
 # NİŞ KONTROLÜ YENİDEN DENEME: research + script + title + niche-check
 # adımları TEK bir döngü içinde, en fazla 5 kez farklı alt-nişle
-# denenir. Niş kontrolü başarısız olursa insan müdahalesi GEREKMEZ,
-# sistem otomatik olarak başka bir konuyla devam eder.
+# denenir.
 
 on:
   workflow_dispatch:
@@ -55,12 +52,12 @@ on:
         default: false
 
 permissions:
-  contents: write   # used_topics.json ve scene library'yi repoya geri commit edebilmek için
+  contents: write
 
 jobs:
 
   # ---------------------------------------------------------------
-  # 0) Bu koşunun nişini seç (tek başına, çok hafif bir adım)
+  # 0) Bu koşunun nişini seç
   # ---------------------------------------------------------------
   pick_niche:
     runs-on: ubuntu-latest
@@ -120,7 +117,6 @@ jobs:
 
   # ---------------------------------------------------------------
   # 2-4.5) Research + script + title + niche-check
-  # (tek job'da kalıyor - sadece metin API çağrıları, ucuz)
   # ---------------------------------------------------------------
   content:
     needs: [pick_niche, trend_analysis]
@@ -173,7 +169,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 5) Voiceover (Wiro voice-clone) - PARALI, artık korunuyor
+  # 5) Voiceover (Wiro voice-clone) - ffmpeg gerektirir
   # ---------------------------------------------------------------
   voiceover:
     needs: content
@@ -183,8 +179,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps
-        run: pip install -r requirements.txt
+      - name: Install deps (ffmpeg dahil)
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
+          pip install -r requirements.txt
       - uses: actions/download-artifact@v4
         with:
           name: content-bundle
@@ -200,7 +198,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 5b) Kelime zaman damgaları (Whisper)
+  # 5b) Kelime zaman damgaları (Whisper) - ffmpeg gerektirir
   # ---------------------------------------------------------------
   align_subtitles:
     needs: voiceover
@@ -227,7 +225,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 6) Background music mix
+  # 6) Background music mix - ffmpeg gerektirir
   # ---------------------------------------------------------------
   music_mix:
     needs: voiceover
@@ -256,7 +254,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 7) Scene images (Pexels + Wiro) - PARALI, artık korunuyor
+  # 7) Scene images (Pexels + Wiro) - ffmpeg gerektirebilir (video klipler)
   # ---------------------------------------------------------------
   scene_images:
     needs: content
@@ -266,8 +264,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps
-        run: pip install -r requirements.txt
+      - name: Install deps (ffmpeg dahil)
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install -r requirements.txt
       - uses: actions/download-artifact@v4
         with:
           name: content-bundle
@@ -284,7 +284,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 8) Thumbnail (Gemini - gemini-3-pro-image)
+  # 8) Thumbnail (Gemini - gemini-2.5-flash-image)
   # ---------------------------------------------------------------
   thumbnail:
     needs: [content, trend_analysis]
@@ -313,7 +313,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 9) Assemble video (Ken Burns + transitions + callouts)
+  # 9) Assemble video - ffmpeg gerektirir
   # ---------------------------------------------------------------
   assemble_video:
     needs: [content, music_mix, scene_images]
@@ -349,7 +349,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 10) Burn subtitles
+  # 10) Burn subtitles - ffmpeg gerektirir
   # ---------------------------------------------------------------
   burn_subtitles:
     needs: [assemble_video, align_subtitles]
@@ -427,19 +427,4 @@ jobs:
     needs: [upload_youtube, scene_images]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: scenes-dir
-          path: assets/scene_library
-      - name: Save topic history and scene library (prevent future repeats, reuse images)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          touch used_topics.json
-          touch used_comments.json
-          mkdir -p assets/scene_library
-          git add used_topics.json used_comments.json assets/scene_library/
-          git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
-          git pull --rebase origin main || true
-          git push
+      -
