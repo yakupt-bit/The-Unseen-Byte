@@ -6,9 +6,9 @@ MODEL MİMARİSİ (tamamen Gemini, tek sistem):
 - Stil analizi (trend kapaklarından patern çıkarma): gemini-3.6-flash (vision)
 - Kapak konsepti üretimi (visual_prompt/hook_text/emphasis_target): gemini-3.6-flash
 - Vurgu noktası koordinat bulma (üretilen görselde): gemini-3.6-flash (vision)
-- Arka plan görsel üretimi: gemini-3-pro-image ("Nano Banana Pro" - en
-  yüksek kalite/marka-güvenliği/metin-render modeli; kapak video başına
-  sadece 1 kez üretildiği için maliyet önemsiz, kalite önceliklendirildi)
+- Arka plan görsel üretimi: gemini-2.5-flash-image ("Nano Banana" - ücretsiz
+  katmanda erişilebilir model; gemini-3-pro-image/"Nano Banana Pro"
+  denendi ama ücretsiz katman kotası SIFIR, faturalandırma gerektiriyor)
 Sahne görselleri (generate_scenes.py) hâlâ Wiro kullanıyor - sadece
 kapak üretimi Gemini'ye taşındı.
 
@@ -74,7 +74,11 @@ from google.genai import types
 from PIL import Image, ImageDraw, ImageFont
 
 MODEL_TEXT_VISION = "gemini-3.6-flash"  # konsept üretimi, stil analizi, koordinat bulma
-MODEL_IMAGE = "gemini-3-pro-image"      # "Nano Banana Pro" - kapak arka planı üretimi
+MODEL_IMAGE = "gemini-2.5-flash-image"  # "Nano Banana" - kapak arka planı üretimi
+# NOT: gemini-3-pro-image (Nano Banana Pro) denendi ama ücretsiz
+# katmanda kotası SIFIR (limit: 0, faturalandırma/billing gerektiriyor).
+# gemini-2.5-flash-image ücretsiz katmanda erişilebilir olduğu için
+# buna düşüldü. İleride faturalandırma açılırsa Pro'ya terfi edilebilir.
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
