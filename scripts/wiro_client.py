@@ -14,6 +14,13 @@ GERÇEK API DAVRANIŞI (JSON şemadan doğrulandı, ilk versiyonumdaki
   2. Gerçek çıktıyı almak için POST /Task/Detail ile taskid'i
      durumu "task_postprocess_end" olana kadar POLL etmek gerekiyor.
   3. Bitince tasklist[0]["outputs"] içinde dosya URL'leri olur.
+
+GÜVENİLİRLİK NOTU: poll_task artık polling sırasında geçici ağ
+hatalarını (requests.RequestException) tek seferlik hata sayıp
+görevi başarısız İLAN ETMİYOR - bu istekleri de kendi içinde
+yeniden deniyor. Böylece Wiro'nun API'sinde anlık bir "hıçkırık"
+olması, aslında görevin arka planda tamamlanmakta olduğu bir
+durumda bile scripti gereksiz yere çökertmiyor.
 """
 import os
 import time
@@ -21,6 +28,11 @@ import time
 import requests
 
 BASE_URL = "https://api.wiro.ai/v1"
+
+# Polling sırasında geçici ağ hatasına (timeout, bağlantı kopması vb.)
+# karşı kaç kez art arda deneneceği - bu ayrı bir sayaç, max_wait'in
+# içinde erir, poll_task'ı bitirmez.
+POLL_ERROR_RETRY_LIMIT = 5
 
 
 def _headers():
@@ -30,7 +42,7 @@ def _headers():
     }
 
 
-def run_model(owner: str, model: str, params: dict, poll_interval: int = 3, max_wait: int = 300) -> dict:
+def run_model(owner: str, model: str, params: dict, poll_interval: int = 3, max_wait: int = 420) -> dict:
     resp = requests.post(
         f"{BASE_URL}/Run/{owner}/{model}",
         headers=_headers(),
@@ -47,19 +59,34 @@ def run_model(owner: str, model: str, params: dict, poll_interval: int = 3, max_
     return poll_task(taskid, poll_interval=poll_interval, max_wait=max_wait)
 
 
-def poll_task(taskid: str, poll_interval: int = 3, max_wait: int = 300) -> dict:
+def poll_task(taskid: str, poll_interval: int = 3, max_wait: int = 420) -> dict:
     terminal_statuses = {"task_postprocess_end", "task_cancel"}
     elapsed = 0
+    consecutive_poll_errors = 0
 
     while elapsed < max_wait:
-        resp = requests.post(
-            f"{BASE_URL}/Task/Detail",
-            headers=_headers(),
-            json={"taskid": taskid},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/Task/Detail",
+                headers=_headers(),
+                json={"taskid": taskid},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            consecutive_poll_errors = 0  # başarılı istek, sayaç sıfırlanır
+        except requests.RequestException as e:
+            consecutive_poll_errors += 1
+            if consecutive_poll_errors > POLL_ERROR_RETRY_LIMIT:
+                raise RuntimeError(
+                    f"Task {taskid} durumu {POLL_ERROR_RETRY_LIMIT} kez üst "
+                    f"üste sorgulanamadı ({type(e).__name__}), vazgeçiliyor."
+                )
+            print(f"  UYARI: poll isteği başarısız ({type(e).__name__}), "
+                  f"tekrar denenecek ({consecutive_poll_errors}/{POLL_ERROR_RETRY_LIMIT})")
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            continue
 
         tasklist = data.get("tasklist", [])
         if not tasklist:
