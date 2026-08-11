@@ -1,17 +1,27 @@
 """
-Seçilen tek başlık için TEK bir kapak (thumbnail) üretir (Wiro API,
-openai/gpt-image-2) ve üzerine metin + kırmızı vurgu halkası bindirir (PIL).
+Seçilen tek başlık için TEK bir kapak (thumbnail) üretir ve üzerine
+metin + kırmızı vurgu halkası bindirir (PIL).
+
+MODEL MİMARİSİ (tamamen Gemini, tek sistem):
+- Stil analizi (trend kapaklarından patern çıkarma): gemini-3.6-flash (vision)
+- Kapak konsepti üretimi (visual_prompt/hook_text/emphasis_target): gemini-3.6-flash
+- Vurgu noktası koordinat bulma (üretilen görselde): gemini-3.6-flash (vision)
+- Arka plan görsel üretimi: gemini-3-pro-image ("Nano Banana Pro" - en
+  yüksek kalite/marka-güvenliği/metin-render modeli; kapak video başına
+  sadece 1 kez üretildiği için maliyet önemsiz, kalite önceliklendirildi)
+Sahne görselleri (generate_scenes.py) hâlâ Wiro kullanıyor - sadece
+kapak üretimi Gemini'ye taşındı.
 
 ÖNEMLİ (kapak-başlık ilişkisi):
 Kapak, başlığın bir tekrarı DEĞİLDİR. Kapak, izleyiciye ham bir
 SORU/GİZEM sunar (görsel + 2-3 kelimelik kışkırtıcı metin); başlık bu
 sorunun bağlamını/gelişmesini verir ama cevabı vermez; videonun kendisi
-asıl cevabı verir. Bu yüzden kapak için Claude'dan başlıktan bağımsız,
+asıl cevabı verir. Bu yüzden kapak için Gemini'den başlıktan bağımsız,
 daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
 
 TREND REFERANSI (--trends verilirse): trend_analysis.py'nin çektiği
 nişte GERÇEKTEN tutan videoların BAŞLIKLARI (metin kalıpları) VE
-KAPAK GÖRSELLERİ (gerçek, indirilip Claude'a vision ile gösterilen
+KAPAK GÖRSELLERİ (gerçek, indirilip Gemini'ye vision ile gösterilen
 JPEG'ler) bağlam olarak kullanılıyor. Amaç birebir kopyalamak değil,
 "bu nişte şu enerji/ton/stil işe yarıyor" sinyalini kapak konseptine
 yansıtmak - hem başlık hem görsel için, hâlâ tamamen orijinal bir
@@ -34,45 +44,40 @@ performans gösterdiğini gösterdi. Bu yüzden:
 - KIRMIZI VURGU ELEMENTİ (halka veya ok) nesnenin/detayın en kritik
   noktasını işaret eder - izleyicinin bakışını anında konuya kilitler.
 - Metin sol altta, kenardan uzakta, koyu/yüksek kontrast bir kutu
-  üzerinde, EN FAZLA 3 KELİME - CTR artırmak için daha punch'lı.
+  üzerinde, EN FAZLA 3 KELİME - CTR artırmak için daha punch'lı. Sadece
+  beyaz/sarı (kırmızı BİLEREK metinde kullanılmıyor - vurgu halkasıyla
+  çakışmasın diye, bkz. TEXT_COLOR_PALETTE).
 - Arka plan hafif bulanık/derinlik hissi veren ikincil bağlam öğeleri
   içerebilir (ör. bulanık bir atari makinesi, oyun kutuları) ama asıl
   netlik/odak her zaman ön plandaki nesnede.
+- Görsel içinde HİÇBİR yazı/tabela/el yazısı/okunabilir metin OLMAMALI
+  (metni biz PIL ile kendimiz ekliyoruz, AI'nin sahne içine kendiliğinden
+  tabela/yazı eklemesi hem kontrolsüz hem bizim eklediğimiz hook_text
+  ile çakışabiliyor - bkz. BRAND_SAFETY_INSTRUCTION).
 - Dört kenara kanal logosunun renginde ince bir çerçeve (marka
   tutarlılığı için).
-
-Claude API çağrısı geçici hatalara (500, rate limit, bağlantı kopması)
-karşı otomatik olarak yeniden dener (bkz. call_claude).
 
 Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/ --script script.md --trends trend.json
 """
 import argparse
-import base64
 import json
 import os
 import random
 import textwrap
 import time
 
-import anthropic
 import requests
+from google import genai
+from google.genai import types
 from PIL import Image, ImageDraw, ImageFont
 
-from wiro_client import run_model, download_output
-
-MODEL_CREATIVE = "claude-sonnet-4-6"
+MODEL_TEXT_VISION = "gemini-3.6-flash"  # konsept üretimi, stil analizi, koordinat bulma
+MODEL_IMAGE = "gemini-3-pro-image"      # "Nano Banana Pro" - kapak arka planı üretimi
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
-
-RETRYABLE_EXCEPTIONS = (
-    anthropic.APIConnectionError,
-    anthropic.APITimeoutError,
-    anthropic.InternalServerError,
-    anthropic.RateLimitError,
-)
 
 THUMBNAIL_STYLE = (
     "bright, vivid, eye-catching mystery-documentary YouTube thumbnail "
@@ -83,6 +88,16 @@ THUMBNAIL_STYLE = (
     "grading (rich blues, warm oranges, bright reds - avoid muddy or "
     "underlit scenes), well-lit, sharp and pops even at small size, "
     "tech/gaming themed, no existing text in the image, 16:9"
+)
+
+BRAND_SAFETY_INSTRUCTION = (
+    " Do NOT include any real trademarks, brand logos, copyrighted "
+    "characters, or recognizable third-party product packaging - keep "
+    "all objects generic/unbranded (e.g. an unmarked cartridge, a "
+    "plain unlabeled box), not tied to any specific real company or IP. "
+    "Do NOT include any signs, placards, labels, handwriting, or any "
+    "readable text/words/numbers anywhere in the scene - the image "
+    "must be completely free of text, since text is added separately."
 )
 
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
@@ -110,23 +125,26 @@ MAX_TREND_TITLES = 8  # prompt'a en fazla kaç trend başlığı eklensin
 MAX_TREND_THUMBNAILS = 3  # görsel patern analizine en fazla kaç gerçek kapak verilsin
 
 
-def call_claude(client, prompt, model=MODEL_CREATIVE, max_tokens=600):
-    """Claude'a istek atar; geçici hatalarda (500/rate limit/bağlantı)
-    üstel bekleme ile otomatik olarak yeniden dener."""
+def call_gemini(client, contents, max_tokens=600):
+    """Gemini'ye istek atar (metin ya da vision, contents string ya da
+    liste olabilir); geçici hatalarda üstel bekleme ile otomatik olarak
+    yeniden dener. Gemini SDK'sının spesifik hata sınıfları garanti
+    belgelenmediği için BİLEREK geniş bir Exception yakalaması
+    kullanılıyor - her hata türünde yeniden denenir."""
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+            response = client.models.generate_content(
+                model=MODEL_TEXT_VISION,
+                contents=contents,
+                config=types.GenerateContentConfig(max_output_tokens=max_tokens),
             )
-            return "".join(b.text for b in response.content if b.type == "text")
-        except RETRYABLE_EXCEPTIONS as e:
+            return response.text or ""
+        except Exception as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
-                print(f"  UYARI: Claude API geçici hata ({type(e).__name__}), "
+                print(f"  UYARI: Gemini API geçici hata ({type(e).__name__}), "
                       f"{delay}sn sonra tekrar deneniyor "
                       f"(deneme {attempt + 1}/{MAX_RETRIES})...")
                 time.sleep(delay)
@@ -153,9 +171,9 @@ def load_trend_thumbnail_urls(trends_path: str) -> list:
 
 
 def analyze_thumbnail_patterns(client, thumbnail_urls: list):
-    """Nişte gerçekten yüksek performans göstermiş kapakları Claude'a
+    """Nişte gerçekten yüksek performans göstermiş kapakları Gemini'ye
     (vision) gösterip SADECE soyut stil/kompozisyon paternini (kontrast,
-    renk paleti, konu yerleşimi, ışık) çıkarttırır. Claude'a AÇIKÇA
+    renk paleti, konu yerleşimi, ışık) çıkarttırır. Gemini'ye AÇIKÇA
     hiçbir görseli/nesneyi/logoyu/kişiyi birebir tarif etmemesi, sadece
     genel eğilimi özetlemesi söylenir - bu, üretilecek YENİ görsele
     kopya değil sadece stil sinyali olarak yansıtılır (tıpkı trend
@@ -165,20 +183,16 @@ def analyze_thumbnail_patterns(client, thumbnail_urls: list):
     if not thumbnail_urls:
         return None
 
-    image_blocks = []
+    image_parts = []
     for url in thumbnail_urls:
         try:
             resp = requests.get(url, timeout=15)
             resp.raise_for_status()
-            image_b64 = base64.standard_b64encode(resp.content).decode("utf-8")
-            image_blocks.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64},
-            })
+            image_parts.append(types.Part.from_bytes(data=resp.content, mime_type="image/jpeg"))
         except Exception:
             continue  # bu görsel indirilemedi, diğerleriyle devam
 
-    if not image_blocks:
+    if not image_parts:
         return None
 
     prompt_text = (
@@ -194,15 +208,7 @@ def analyze_thumbnail_patterns(client, thumbnail_urls: list):
         "Çıktı SADECE 2-3 cümlelik bir stil özeti, düz metin (JSON değil)."
     )
     try:
-        response = client.messages.create(
-            model=MODEL_CREATIVE,
-            max_tokens=250,
-            messages=[{
-                "role": "user",
-                "content": image_blocks + [{"type": "text", "text": prompt_text}],
-            }],
-        )
-        raw = "".join(b.text for b in response.content if b.type == "text")
+        raw = call_gemini(client, image_parts + [prompt_text], max_tokens=250)
         return raw.strip() or None
     except Exception as e:
         print(f"  UYARI: kapak stil analizi başarısız ({type(e).__name__}), atlanıyor")
@@ -274,7 +280,7 @@ doğrudan kopyalama): {script_excerpt[:800]}
    ikincil/bağlamsal öğeler olabilir (ör. bulanık bir atari makinesi,
    oyun kutuları) ama net odak HER ZAMAN ön plandaki tek nesnede olsun.
    Kişi/karakter/yüz KULLANMA - bu formatta kapak tamamen nesne
-   odaklı, insan figürü YOK.
+   odaklı, insan figürü YOK. Sahnede HİÇBİR yazı/tabela/etiket OLMASIN.
 2. "hook_text": İngilizce, TÜM BÜYÜK HARF, EN FAZLA 3 KELİME (2 kelime
    daha da güçlü olur), soru işareti kullanmadan, ŞOK EDİCİ/İDDİALI bir
    ifade - "interesting" değil "impossible to ignore" hissi versin
@@ -289,7 +295,7 @@ doğrudan kopyalama): {script_excerpt[:800]}
 
 Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "emphasis_target": "..."}}"""
 
-    raw = call_claude(client, prompt)
+    raw = call_gemini(client, prompt)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(cleaned)
@@ -303,34 +309,55 @@ doğrudan kopyalama): {script_excerpt[:800]}
         }
 
 
-def generate_background(prompt: str, out_path: str):
-    full_prompt = f"{THUMBNAIL_STYLE}. Subject: {prompt}"
+def _extract_gemini_image_bytes(response):
+    """Gemini yanıtındaki content parts içinden ilk görsel veriyi
+    çıkarır. Bulamazsa None döner."""
     try:
-        task = run_model("openai", "gpt-image-2", {
-            "prompt": full_prompt,
-            "resolution": "1k",
-            "ratio": "16:9",
-            "quality": "medium",
-            "samples": 1,
-        })
-        download_output(task, out_path)
-    except RuntimeError as e:
-        if "safety system" in str(e).lower():
-            print("  UYARI: kapak için güvenlik reddi, jenerik tarifle yeniden deniyorum...")
-            fallback_prompt = (
-                f"{THUMBNAIL_STYLE}. Subject: an abstract, dramatic "
-                "technology-themed scene, glowing shapes, no people, no text"
-            )
-            task = run_model("openai", "gpt-image-2", {
-                "prompt": fallback_prompt,
-                "resolution": "1k",
-                "ratio": "16:9",
-                "quality": "medium",
-                "samples": 1,
-            })
-            download_output(task, out_path)
-        else:
-            raise
+        for part in response.candidates[0].content.parts:
+            if getattr(part, "inline_data", None) and part.inline_data.data:
+                return part.inline_data.data
+    except (AttributeError, IndexError):
+        pass
+    return None
+
+
+def generate_background(client, prompt: str, out_path: str):
+    """Kapak arka planını Gemini (gemini-3-pro-image / Nano Banana Pro)
+    ile üretir. Marka/telif ve metin güvenliği için prompt'a açık bir
+    kısıt eklenir (BRAND_SAFETY_INSTRUCTION). Üretim başarısız olursa
+    (güvenlik reddi, boş yanıt vb.) jenerik/soyut bir tarifle bir kez
+    daha denenir - pipeline kırılmaz."""
+    full_prompt = f"{THUMBNAIL_STYLE}. Subject: {prompt}.{BRAND_SAFETY_INSTRUCTION}"
+
+    def _call(p: str):
+        response = client.models.generate_content(
+            model=MODEL_IMAGE,
+            contents=p,
+            config=types.GenerateContentConfig(
+                response_modalities=[types.Modality.TEXT, types.Modality.IMAGE],
+            ),
+        )
+        return _extract_gemini_image_bytes(response)
+
+    try:
+        image_bytes = _call(full_prompt)
+        if not image_bytes:
+            raise RuntimeError("Gemini yanıtında görsel verisi yok")
+        with open(out_path, "wb") as f:
+            f.write(image_bytes)
+    except Exception as e:
+        print(f"  UYARI: Gemini kapak üretimi başarısız ({type(e).__name__}), "
+              f"jenerik tarifle yeniden deniyorum...")
+        fallback_prompt = (
+            f"{THUMBNAIL_STYLE}. Subject: an abstract, dramatic "
+            "technology-themed scene, glowing shapes, no people, no text."
+            f"{BRAND_SAFETY_INSTRUCTION}"
+        )
+        image_bytes = _call(fallback_prompt)
+        if not image_bytes:
+            raise RuntimeError("Gemini yedek denemede de görsel üretemedi")
+        with open(out_path, "wb") as f:
+            f.write(image_bytes)
 
 
 def draw_border(draw, img_w, img_h):
@@ -345,7 +372,7 @@ def draw_border(draw, img_w, img_h):
 
 def locate_emphasis_point(client, image_path: str, emphasis_target: str,
                            img_w: int, img_h: int):
-    """Claude'a (vision) üretilen görseli gösterip emphasis_target'ın
+    """Gemini'ye (vision) üretilen görseli gösterip emphasis_target'ın
     TAM piksel koordinatını ve yaklaşık boyutunu sordurur. İki deneme
     hakkı var (geçici hata/parse sorunu için). İkisi de başarısız
     olursa None döner - çağıran taraf SABİT/ALAKASIZ bir yere halka
@@ -354,7 +381,8 @@ def locate_emphasis_point(client, image_path: str, emphasis_target: str,
     for attempt in range(2):
         try:
             with open(image_path, "rb") as f:
-                image_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+                image_bytes = f.read()
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/png")
 
             prompt = (
                 f"Bu görselde şunu bul: \"{emphasis_target}\". "
@@ -366,25 +394,12 @@ def locate_emphasis_point(client, image_path: str, emphasis_target: str,
                 f"Çıktı SADECE JSON: {{\"found\": true, \"x\": <int>, "
                 f"\"y\": <int>, \"radius\": <int>}} ya da {{\"found\": false}}"
             )
-            response = client.messages.create(
-                model=MODEL_CREATIVE,
-                max_tokens=150,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "source": {
-                            "type": "base64", "media_type": "image/png", "data": image_b64
-                        }},
-                        {"type": "text", "text": prompt},
-                    ],
-                }],
-            )
-            raw = "".join(b.text for b in response.content if b.type == "text")
+            raw = call_gemini(client, [image_part, prompt], max_tokens=150)
             cleaned = raw.replace("```json", "").replace("```", "").strip()
             result = json.loads(cleaned)
 
             if not result.get("found", False):
-                print(f"  UYARI: Claude vurgu noktasını görselde bulamadı "
+                print(f"  UYARI: Gemini vurgu noktasını görselde bulamadı "
                       f"(deneme {attempt + 1}/2)")
                 continue
 
@@ -488,7 +503,7 @@ def main():
     parser.add_argument("--script", required=False, default="script.md",
                          help="Kapak konsepti için bağlam olarak kullanılacak script dosyası")
     parser.add_argument("--trends", required=False, default="trend.json",
-                         help="trend_analysis.py çıktısı - nişte tutan başlıkları referans almak için")
+                         help="trend_analysis.py çıktısı - nişte tutan başlıkları/kapakları referans almak için")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -507,7 +522,7 @@ def main():
     if trend_titles:
         print(f"  {len(trend_titles)} trend başlığı referans olarak kullanılıyor")
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     trend_thumbnail_urls = load_trend_thumbnail_urls(args.trends)
     style_summary = None
@@ -521,7 +536,7 @@ def main():
     concept = generate_thumbnail_concept(client, title, script_excerpt, trend_titles, style_summary)
 
     raw_path = os.path.join(args.out_dir, "raw_1.png")
-    generate_background(concept["visual_prompt"], raw_path)
+    generate_background(client, concept["visual_prompt"], raw_path)
 
     final_path = os.path.join(args.out_dir, "thumbnail_1.png")
     overlay_text(raw_path, concept["hook_text"], client,
