@@ -19,8 +19,14 @@ name: Produce Video (fully automated)
 # o adımlar tekrar ücret ödemeden atlanır.
 #
 # Araştırma+script+başlık+niş-kontrolü döngüsü (2-4.5) BİLEREK tek job
-# içinde kaldı - sadece Claude metin çağrıları kullanır (Wiro/render
-# gibi pahalı/parasal bir maliyeti yok), bölmenin getirisi düşük.
+# içinde kaldı - sadece metin API çağrıları kullanır (Wiro/render gibi
+# pahalı/parasal bir maliyeti yok), bölmenin getirisi düşük.
+#
+# MODEL NOTU: research.py ve generate_script.py hâlâ Claude (ANTHROPIC_
+# API_KEY) kullanıyor. generate_titles.py ve generate_thumbnail.py
+# artık Gemini (GEMINI_API_KEY) kullanıyor - kapak üretimi ayrıca
+# gemini-3-pro-image ile, Wiro'ya artık kapak için ihtiyaç yok (sahne
+# görselleri hâlâ Wiro'da).
 #
 # Zamanlama SADECE cron-job.org üzerinden yönetiliyor (haftada 3 gün,
 # 11:00 Türkiye saati - pipeline'a tampon süre vermek için).
@@ -111,7 +117,7 @@ jobs:
 
   # ---------------------------------------------------------------
   # 2-4.5) Research + script + title + niche-check
-  # (tek job'da kalıyor - sadece Claude metin çağrıları, ucuz)
+  # (tek job'da kalıyor - sadece metin API çağrıları, ucuz)
   # ---------------------------------------------------------------
   content:
     needs: [pick_niche, trend_analysis]
@@ -129,6 +135,7 @@ jobs:
       - name: "Research + script + title + niche-check (uyumsuzsa otomatik 5 kez farklı konuyla dener)"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TOPIC_HINT: ${{ needs.pick_niche.outputs.topic_hint }}
           TEST_FLAG: ${{ github.event.inputs.test_mode == 'true' && '--test' || '' }}
         run: |
@@ -274,7 +281,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 8) Thumbnail (Wiro) - PARALI, artık korunuyor
+  # 8) Thumbnail (Gemini - gemini-3-pro-image)
   # ---------------------------------------------------------------
   thumbnail:
     needs: [content, trend_analysis]
@@ -292,10 +299,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: trend-json
-      - name: Thumbnail (Wiro reve/generate)
+      - name: Thumbnail (Gemini)
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
       - uses: actions/upload-artifact@v4
         with:
