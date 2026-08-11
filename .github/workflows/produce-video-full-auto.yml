@@ -110,6 +110,7 @@ jobs:
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TOPIC_HINT: ${{ needs.pick_niche.outputs.topic_hint }}
         run: python scripts/trend_analysis.py --out trend.json
       - uses: actions/upload-artifact@v4
         with:
