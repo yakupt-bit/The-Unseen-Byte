@@ -326,7 +326,7 @@ def _extract_gemini_image_bytes(response):
 
 
 def generate_background(client, prompt: str, out_path: str):
-    """Kapak arka planını Gemini (gemini-3-pro-image / Nano Banana Pro)
+    """Kapak arka planını Gemini (gemini-2.5-flash-image / Nano Banana)
     ile üretir. Marka/telif ve metin güvenliği için prompt'a açık bir
     kısıt eklenir (BRAND_SAFETY_INSTRUCTION). Üretim başarısız olursa
     (güvenlik reddi, boş yanıt vb.) jenerik/soyut bir tarifle bir kez
@@ -339,6 +339,7 @@ def generate_background(client, prompt: str, out_path: str):
             contents=p,
             config=types.GenerateContentConfig(
                 response_modalities=[types.Modality.TEXT, types.Modality.IMAGE],
+                image_config=types.ImageConfig(aspect_ratio="16:9"),
             ),
         )
         return _extract_gemini_image_bytes(response)
@@ -464,7 +465,8 @@ def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, 
         font = ImageFont.truetype(FONT_PATH, font_size)
         avg_char_w = font.getbbox("A")[2] - font.getbbox("A")[0]
         wrap_width = max(4, max_text_width // max(avg_char_w, 1))
-        wrapped = textwrap.fill(short_text, width=wrap_width)
+        wrapped = textwrap.fill(short_text, width=wrap_width,
+                                 break_long_words=False, break_on_hyphens=False)
 
         bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
         text_w = bbox[2] - bbox[0]
@@ -475,7 +477,8 @@ def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, 
         font_size -= 4
     else:
         font = ImageFont.truetype(FONT_PATH, min_font_size)
-        wrapped = textwrap.fill(short_text, width=10)
+        wrapped = textwrap.fill(short_text, width=10,
+                                 break_long_words=False, break_on_hyphens=False)
         bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
         text_h = bbox[3] - bbox[1]
 
