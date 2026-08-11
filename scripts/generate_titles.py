@@ -2,6 +2,12 @@
 Script için 8 başlık adayı üretir, içlerinden EN GÜÇLÜ olanı seçer ve
 titles.json'a kaydeder.
 
+MODEL DEĞİŞİKLİĞİ: Bu script artık Claude yerine Gemini API kullanıyor
+(google-genai SDK). Üretim için gemini-3.6-flash (en güçlü/güncel Flash
+modeli), seçim/sıralama için daha hızlı ve ucuz gemini-3.1-flash-lite
+kullanılıyor - Claude'daki Sonnet/Haiku ayrımıyla aynı iki-katmanlı
+mantık korunuyor.
+
 NOT: YouTube'un native "Test & Compare" (A/B testing) özelliği sadece
 YouTube Studio arayüzünden (desktop, elle) kullanılabiliyor, API
 üzerinden erişilemiyor; ayrıca YouTube Partner Program (YPP) üyeliği
@@ -17,8 +23,8 @@ hem üretim hem SEÇİM adımına besleniyor. Amaç birebir kopyalamak değil,
 sinyalini kullanmak - hâlâ tamamen özgün başlıklar üretiliyor. Sadece
 metin kalıbı kullanılıyor (görsel/link değil), telif riski yok.
 
-Her Claude API çağrısı geçici hatalara (500, rate limit, bağlantı
-kopması) karşı otomatik olarak yeniden dener (bkz. call_claude).
+Her Gemini API çağrısı geçici hatalara (500, rate limit, bağlantı
+kopması) karşı otomatik olarak yeniden dener (bkz. call_gemini).
 
 Kullanım:
     python scripts/generate_titles.py --script script.md --out titles.json
@@ -29,42 +35,39 @@ import json
 import os
 import time
 
-import anthropic
+from google import genai
+from google.genai import types
 
-MODEL_CREATIVE = "claude-sonnet-4-6"
-MODEL_UTILITY = "claude-haiku-4-5-20251001"
+MODEL_CREATIVE = "gemini-3.6-flash"
+MODEL_UTILITY = "gemini-3.1-flash-lite"
 BRAND_SUFFIX = " | The Unseen Byte"
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
 
-RETRYABLE_EXCEPTIONS = (
-    anthropic.APIConnectionError,
-    anthropic.APITimeoutError,
-    anthropic.InternalServerError,
-    anthropic.RateLimitError,
-)
-
 MAX_TREND_REFERENCES = 8  # prompt'a en fazla kaç kanıtlanmış örnek eklensin
 
 
-def call_claude(client, prompt, model, max_tokens=800):
-    """Claude'a istek atar; geçici hatalarda (500/rate limit/bağlantı)
-    üstel bekleme ile otomatik olarak yeniden dener."""
+def call_gemini(client, prompt, model, max_tokens=800):
+    """Gemini'ye istek atar; geçici hatalarda (500/rate limit/bağlantı)
+    üstel bekleme ile otomatik olarak yeniden dener. Gemini SDK'sının
+    spesifik hata sınıfları garanti belgelenmediği için burada BİLEREK
+    geniş bir Exception yakalaması kullanılıyor - her hata türünde
+    yeniden denenir, MAX_RETRIES sonunda son hata fırlatılır."""
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
-            response = client.messages.create(
+            response = client.models.generate_content(
                 model=model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+                contents=prompt,
+                config=types.GenerateContentConfig(max_output_tokens=max_tokens),
             )
-            return "".join(b.text for b in response.content if b.type == "text")
-        except RETRYABLE_EXCEPTIONS as e:
+            return response.text or ""
+        except Exception as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
-                print(f"  UYARI: Claude API geçici hata ({type(e).__name__}), "
+                print(f"  UYARI: Gemini API geçici hata ({type(e).__name__}), "
                       f"{delay}sn sonra tekrar deneniyor "
                       f"(deneme {attempt + 1}/{MAX_RETRIES})...")
                 time.sleep(delay)
@@ -102,8 +105,8 @@ def load_trend_references(trends_path: str) -> list:
 
 
 def format_trend_block(trend_refs: list) -> str:
-    """Trend referanslarını, Claude'a hem üretim hem seçim adımında
-    verilecek okunabilir bir metin bloğuna çevirir."""
+    """Trend referanslarını, hem üretim hem seçim adımında verilecek
+    okunabilir bir metin bloğuna çevirir."""
     if not trend_refs:
         return ""
     lines = []
@@ -140,7 +143,7 @@ def main():
     else:
         print("  Trend referansı yok/boş, kalıp-tabanlı üretime devam ediliyor")
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     gen_prompt = f"""Bu script için 8 farklı YouTube başlığı öner.
 ÖNEMLİ: Başlıkların TAMAMI İNGİLİZCE olmalı, tek bir Türkçe kelime bile
@@ -171,9 +174,17 @@ SCRIPT:
 
 Çıktı SADECE JSON dizi, İngilizce başlıklarla: ["title1", "title2", ...]"""
 
-    raw_candidates = call_claude(client, gen_prompt, MODEL_CREATIVE)
+    raw_candidates = call_gemini(client, gen_prompt, MODEL_CREATIVE, max_tokens=1200)
     cleaned = raw_candidates.replace("```json", "").replace("```", "").strip()
-    candidates = json.loads(cleaned)
+    try:
+        candidates = json.loads(cleaned)
+        if not isinstance(candidates, list) or not candidates:
+            raise ValueError("boş/liste değil")
+    except (json.JSONDecodeError, ValueError):
+        # Güvenli düşüş: yanıt yarıda kesildiyse/parse edilemiyorsa,
+        # jenerik tek bir aday ile devam et - pipeline asla çökmez.
+        print("  UYARI: başlık adayları parse edilemedi, jenerik yedek kullanılıyor")
+        candidates = ["What Really Happened Here"]
 
     rank_prompt = f"""Aşağıdaki İngilizce YouTube başlık adaylarından EN
 GÜÇLÜ tek bir tanesini seç. Kriterler: merak açığı gücü (cevabı
@@ -190,9 +201,16 @@ ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 Çıktı SADECE JSON (başlık İngilizce kalacak, gerekçe Türkçe olabilir):
 {{"selected": "title", "reason": "gerekçe"}}"""
 
-    raw_rank = call_claude(client, rank_prompt, MODEL_UTILITY, max_tokens=300)
+    raw_rank = call_gemini(client, rank_prompt, MODEL_UTILITY, max_tokens=600)
     cleaned_rank = raw_rank.replace("```json", "").replace("```", "").strip()
-    result = json.loads(cleaned_rank)
+    try:
+        result = json.loads(cleaned_rank)
+    except json.JSONDecodeError:
+        # Güvenli düşüş: yanıt yarıda kesildiyse/parse edilemiyorsa,
+        # ilk adayı seç - pipeline asla bu yüzden çökmez.
+        print("  UYARI: seçim yanıtı parse edilemedi (muhtemelen yarıda "
+              "kesildi), ilk aday başlık kullanılıyor")
+        result = {"selected": candidates[0], "reason": "otomatik yedek seçim (parse hatası)"}
 
     final_title = result["selected"]
     if not final_title.endswith(BRAND_SUFFIX):
