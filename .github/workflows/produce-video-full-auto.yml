@@ -427,4 +427,19 @@ jobs:
     needs: [upload_youtube, scene_images]
     runs-on: ubuntu-latest
     steps:
-      -
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: scenes-dir
+          path: assets/scene_library
+      - name: Save topic history and scene library (prevent future repeats, reuse images)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          touch used_topics.json
+          touch used_comments.json
+          mkdir -p assets/scene_library
+          git add used_topics.json used_comments.json assets/scene_library/
+          git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
+          git pull --rebase origin main || true
+          git push
