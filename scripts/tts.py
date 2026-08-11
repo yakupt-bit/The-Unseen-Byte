@@ -9,6 +9,22 @@ ve Wiro'ya PUBLIC RAW GITHUB URL'İ olarak veriliyor (base64 değil).
 bir limiti, değiştirilemez. Bu yüzden script küçük parçalara bölünüp
 her biri AYRI AYRI seslendirilip sonra BİRLEŞTİRİLİYOR.
 
+GÜVENİLİRLİK NOTU (parça bazlı yeniden deneme + checkpoint):
+Script'ler 80-150+ parçaya bölünebiliyor, ve Wiro API'si ARADA SIRADA
+tek bir parçada yavaş kalabiliyor (poll_task zaman aşımı). Öncesinde
+TEK bir parçanın başarısız olması, o ana kadar üretilmiş TÜM parçaları
+(ör. 88/113) çöpe atıyordu çünkü script tamamen çöküyordu. Artık:
+  1. Her parça kendi başına en fazla RETRY_PER_CHUNK kez denenir
+     (üstel bekleme ile) - geçici bir Wiro yavaşlığı artık tüm işi
+     götürmüyor.
+  2. Her parçanın ham çıktısı DİSKE yazıldıktan hemen sonra kontrol
+     edilir - eğer bu script AYNI koşu içinde (ör. GitHub Actions
+     "Re-run failed jobs" ile) yeniden başlatılırsa ve önceki
+     denemeden kalma ham dosyalar hâlâ diskte duruyorsa, o parçalar
+     ATLANIR, Wiro'ya tekrar ücret ödenmez. (Not: GitHub Actions
+     job'ları arasında dosya sistemi kalıcı DEĞİLDİR, bu yalnızca
+     aynı iş/container ömrü içindeki tekrar denemelerde işe yarar.)
+
 Kullanım:
     python scripts/tts.py --script script.md --out audio/voiceover.mp3
 """
@@ -16,10 +32,13 @@ import argparse
 import os
 import re
 import subprocess
+import time
 
 from wiro_client import run_model, download_output
 
 CHUNK_SIZE = 200
+RETRY_PER_CHUNK = 3
+RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20
 
 
 def clean_script(raw: str) -> str:
@@ -73,6 +92,33 @@ def synthesize_chunk(text: str, out_path: str):
     download_output(result, out_path)
 
 
+def synthesize_chunk_with_retry(text: str, out_path: str, chunk_num: int, total_chunks: int):
+    """Bir parçayı en fazla RETRY_PER_CHUNK kez dener. Diskte zaten
+    geçerli bir ham dosya varsa (aynı koşuda önceki denemeden kalma),
+    tekrar üretmeden atlar - Wiro'ya gereksiz ücret ödenmez."""
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        print(f"  Parça {chunk_num}/{total_chunks}: zaten üretilmiş, atlanıyor (checkpoint)")
+        return
+
+    last_error = None
+    for attempt in range(RETRY_PER_CHUNK):
+        try:
+            synthesize_chunk(text, out_path)
+            return
+        except Exception as e:
+            last_error = e
+            if attempt < RETRY_PER_CHUNK - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"  UYARI: parça {chunk_num}/{total_chunks} başarısız "
+                      f"({type(e).__name__}), {delay}sn sonra tekrar deneniyor "
+                      f"(deneme {attempt + 2}/{RETRY_PER_CHUNK})...")
+                time.sleep(delay)
+    raise RuntimeError(
+        f"Parça {chunk_num}/{total_chunks}, {RETRY_PER_CHUNK} denemenin "
+        f"hepsinde başarısız oldu. Son hata: {last_error}"
+    )
+
+
 def normalize_audio(in_path: str, out_path: str):
     raw_duration = get_duration(in_path)
     fade_out_start = max(raw_duration - 0.08, 0)
@@ -124,7 +170,7 @@ def main():
         raw_path = f"{args.out}.raw{i}.mp3"
         norm_path = f"{args.out}.norm{i}.wav"
 
-        synthesize_chunk(chunk, raw_path)
+        synthesize_chunk_with_retry(chunk, raw_path, i + 1, len(chunks))
         normalize_audio(raw_path, norm_path)
 
         duration = get_duration(norm_path)
