@@ -25,6 +25,15 @@ TEK bir parçanın başarısız olması, o ana kadar üretilmiş TÜM parçalar�
      job'ları arasında dosya sistemi kalıcı DEĞİLDİR, bu yalnızca
      aynı iş/container ömrü içindeki tekrar denemelerde işe yarar.)
 
+SES AYARLARI (bugün güncellendi):
+  - Hız: 1.10x -> 1.20x (SPEED_FACTOR)
+  - Ses seviyesi: %15 artırıldı (VOLUME_FACTOR) - aşırıya kaçmadan
+  - Stüdyo yankısı: hafif bir "oda tonu" eklendi (ECHO_FILTER) - kısa
+    gecikme (35ms) ve düşük decay (0.25) ile abartılı kanyon-yankısı
+    değil, ince bir stüdyo/oda hissi hedeflendi. Değerleri beğenmezsen
+    ECHO_FILTER sabitini ayarlayıp deneyebilirsin (format:
+    aecho=in_gain:out_gain:delay_ms:decay).
+
 Kullanım:
     python scripts/tts.py --script script.md --out audio/voiceover.mp3
 """
@@ -39,6 +48,13 @@ from wiro_client import run_model, download_output
 CHUNK_SIZE = 200
 RETRY_PER_CHUNK = 3
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20
+
+# --- Ses ayarları ---
+SPEED_FACTOR = 1.20
+VOLUME_FACTOR = 1.15
+# Hafif stüdyo/oda yankısı: kısa gecikme + düşük decay = abartısız.
+# aecho=in_gain:out_gain:delay_ms:decay
+ECHO_FILTER = "aecho=0.6:0.5:35:0.25"
 
 
 def clean_script(raw: str) -> str:
@@ -186,17 +202,22 @@ def main():
         for p in normalized_paths:
             f.write(f"file '{os.path.abspath(p)}'\n")
 
+    # Hız + ses seviyesi + hafif stüdyo yankısı tek zincirde uygulanıyor.
+    audio_filter = f"atempo={SPEED_FACTOR},volume={VOLUME_FACTOR},{ECHO_FILTER}"
+
     subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
-         "-af", "atempo=1.10",
+         "-af", audio_filter,
          "-c:a", "libmp3lame", "-q:a", "2", args.out],
         check=True,
     )
 
     final_duration = get_duration(args.out)
-    expected_after_speedup = total_expected_duration / 1.10
+    expected_after_speedup = total_expected_duration / SPEED_FACTOR
     print(f"Seslendirme tamamlandı -> {args.out}")
-    print(f"Beklenen toplam süre (1.10x hız sonrası): {expected_after_speedup:.1f}s, "
+    print(f"Ses ayarları: hız={SPEED_FACTOR}x, ses seviyesi=x{VOLUME_FACTOR}, "
+          f"yankı=({ECHO_FILTER})")
+    print(f"Beklenen toplam süre ({SPEED_FACTOR}x hız sonrası): {expected_after_speedup:.1f}s, "
           f"gerçek dosya süresi: {final_duration:.1f}s")
     if abs(final_duration - expected_after_speedup) > 3:
         print("UYARI: süre uyuşmuyor, birleştirmede sorun olabilir!")
