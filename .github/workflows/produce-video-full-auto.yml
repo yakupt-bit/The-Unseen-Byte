@@ -32,11 +32,25 @@ name: Produce Video (fully automated)
 # Zamanlama SADECE cron-job.org üzerinden yönetiliyor (haftada 3 gün,
 # 11:00 Türkiye saati). GitHub'ın kendi "schedule" tetikleyicisi
 # BİLEREK yok. Video, upload_youtube.py sayesinde YouTube'un kendi
-# zamanlı yayın özelliğiyle 17:00 TR'de otomatik yayına giriyor.
+# zamanlı yayın özelliğiyle 21:00 TR'de otomatik yayına giriyor.
 #
 # NİŞ KONTROLÜ YENİDEN DENEME: research + script + title + niche-check
 # adımları TEK bir döngü içinde, en fazla 5 kez farklı alt-nişle
 # denenir.
+#
+# BUGÜNKÜ KRİTİK DÜZELTME (used_topics.json / used_comments.json):
+# Önceden save_topic_history job'ı bu iki dosyayı "touch" ile
+# (yani BOŞ/olduğu gibi) commit ediyordu - content ve upload_youtube
+# job'larının KENDİ İZOLE ortamlarında yaptığı gerçek güncellemeler
+# hiçbir Artifact'e yüklenmediği için kayboluyordu. Sonuç: niş/konu
+# rotasyonu ve yorum tekrarı önleme mekanizmaları kağıt üstünde doğru
+# görünüyor ama PRATİKTE HİÇ ÇALIŞMIYORDU. Şimdi:
+#   - content job'ı used_topics.json'ı da content-bundle Artifact'ine
+#     ekliyor.
+#   - upload_youtube job'ı used_comments.json'ı ayrı bir Artifact
+#     olarak yüklüyor.
+#   - save_topic_history bu Artifact'leri İNDİRİP commit ediyor,
+#     touch ile üzerine boş dosya yazmıyor.
 
 on:
   workflow_dispatch:
@@ -166,6 +180,7 @@ jobs:
             facts.json
             script.md
             titles.json
+            used_topics.json
           retention-days: 7
 
   # ---------------------------------------------------------------
@@ -419,15 +434,27 @@ jobs:
           python scripts/upload_youtube.py --video output/final.mp4 \
             --titles titles.json --thumbnail output/thumbnails/thumbnail_1.png \
             --script script.md --facts facts.json --alignment audio/alignment.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: used-comments-json
+          path: used_comments.json
+          retention-days: 7
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------
   # 12) Konu geçmişi + sahne kütüphanesini repoya geri commit et
   # ---------------------------------------------------------------
   save_topic_history:
-    needs: [upload_youtube, scene_images]
+    needs: [upload_youtube, scene_images, content]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: content-bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: used-comments-json
       - uses: actions/download-artifact@v4
         with:
           name: scenes-dir
@@ -436,8 +463,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          touch used_topics.json
-          touch used_comments.json
           mkdir -p assets/scene_library
           git add used_topics.json used_comments.json assets/scene_library/
           git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
