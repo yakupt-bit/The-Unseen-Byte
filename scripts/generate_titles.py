@@ -3,28 +3,36 @@ Script için 8 başlık adayı üretir, içlerinden EN GÜÇLÜ olanı seçer ve
 titles.json'a kaydeder.
 
 MODEL DEĞİŞİKLİĞİ: Bu script artık Claude yerine Gemini API kullanıyor
-(google-genai SDK). Üretim için gemini-3.6-flash (en güçlü/güncel Flash
-modeli), seçim/sıralama için daha hızlı ve ucuz gemini-3.1-flash-lite
-kullanılıyor - Claude'daki Sonnet/Haiku ayrımıyla aynı iki-katmanlı
-mantık korunuyor.
+(google-genai SDK). Üretim için gemini-3.6-flash, seçim/sıralama için
+gemini-3.1-flash-lite kullanılıyor.
 
-NOT: YouTube'un native "Test & Compare" (A/B testing) özelliği sadece
-YouTube Studio arayüzünden (desktop, elle) kullanılabiliyor, API
-üzerinden erişilemiyor; ayrıca YouTube Partner Program (YPP) üyeliği
-gerektiriyor. Kanal bu eşiklere ulaşana kadar tek başlık üretmek daha
-mantıklı - bu yüzden A/B akışı kaldırıldı, sistem artık doğrudan en
-güçlü tek başlığı seçip kullanıyor.
+NOT: YouTube'un native "Test & Compare" (A/B testing) özelliği API
+üzerinden erişilemiyor, bu yüzden sistem doğrudan en güçlü tek başlığı
+seçip kullanıyor.
 
-TREND REFERANSI (--trends verilirse): trend_analysis.py'nin YouTube Data
-API ile çektiği GERÇEK, DOĞRULANMIŞ performans verisi (son 30 günde
-250k+ izlenme almış videoların başlığı + gerçek izlenme/beğeni sayısı)
-hem üretim hem SEÇİM adımına besleniyor. Amaç birebir kopyalamak değil,
-"bu nişte hangi başlık YAPISI/TONU gerçekten büyük izlenme çekmiş"
-sinyalini kullanmak - hâlâ tamamen özgün başlıklar üretiliyor. Sadece
-metin kalıbı kullanılıyor (görsel/link değil), telif riski yok.
+TREND REFERANSI (--trends verilirse): trend_analysis.py'nin çektiği
+GERÇEK, DOĞRULANMIŞ performans verisi hem üretim hem SEÇİM adımına
+besleniyor.
 
-Her Gemini API çağrısı geçici hatalara (500, rate limit, bağlantı
-kopması) karşı otomatik olarak yeniden dener (bkz. call_gemini).
+--- BUGÜNKÜ EKLEME: BAŞLIK ŞABLONU TEKRARI ÖNLEME ---
+Kanalın gerçek yayınlanmış başlıklarına bakıldığında ("One Room Changed
+Everything", "One Call Changed Everything" gibi) AYNI CÜMLE KALIBININ
+tekrar tekrar kullanıldığı görüldü - konular farklı olsa bile yapı hep
+aynı kaldığı için izleyiciye "şablon/doldurma içerik" hissi veriyordu.
+research.py'nin used_topics.json ile konu tekrarını önlemesiyle AYNI
+mantık burada da uygulandı:
+  - used_titles.json (repo kökünde, her koşuda güncellenir) geçmişte
+    seçilmiş TÜM başlıkları tutar.
+  - Yeni başlık adayları üretilirken bu liste Claude'a değil Gemini'ye
+    "bu YAPISAL KALIPLARI (ör. 'One X Changed Everything', 'The X That
+    Y') TEKRAR ETME, her seferinde gramatik olarak FARKLI bir cümle
+    yapısı kullan" talimatıyla veriliyor.
+  - Ton talimatı da AGRESİF/İDDİALI olacak şekilde güçlendirildi -
+    yumuşak/genel ifadeler yerine doğrudan, çarpıcı, "durdurucu"
+    cümleler istendi.
+JSON parse artık extract_json_array/object ile daha sağlam - eskiden
+saf json.loads Gemini yanıtın başına/sonuna metin eklediğinde sessizce
+çöküyordu.
 
 Kullanım:
     python scripts/generate_titles.py --script script.md --out titles.json
@@ -47,13 +55,71 @@ RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
 
 MAX_TREND_REFERENCES = 8  # prompt'a en fazla kaç kanıtlanmış örnek eklensin
 
+USED_TITLES_FILE = "used_titles.json"
+MAX_TITLES_IN_PROMPT = 30  # şablon tekrarı kontrolü için en fazla kaç geçmiş başlık gösterilsin
+
+
+def extract_json_array(raw: str):
+    """Modelin çıktısındaki JSON dizisini, öncesinde/sonrasında
+    açıklama metni olsa bile güvenilir şekilde çıkarır."""
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start == -1 or end == -1 or end < start:
+        raise json.JSONDecodeError("JSON dizisi bulunamadı", cleaned, 0)
+    return json.loads(cleaned[start:end + 1])
+
+
+def extract_json_object(raw: str) -> dict:
+    """Modelin çıktısındaki JSON objesini, öncesinde/sonrasında
+    açıklama metni olsa bile güvenilir şekilde çıkarır."""
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise json.JSONDecodeError("JSON objesi bulunamadı", cleaned, 0)
+    return json.loads(cleaned[start:end + 1])
+
+
+def load_used_titles() -> list:
+    if not os.path.exists(USED_TITLES_FILE):
+        return []
+    try:
+        with open(USED_TITLES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_used_titles(titles: list):
+    with open(USED_TITLES_FILE, "w", encoding="utf-8") as f:
+        json.dump(titles, f, ensure_ascii=False, indent=2)
+
+
+def format_used_titles_block(used_titles: list) -> str:
+    """Geçmiş başlıkları, YAPISAL KALIP tekrarını önlemek için prompt'a
+    eklenecek bir metin bloğuna çevirir. Amaç kelime tekrarı değil,
+    CÜMLE YAPISI/KALIBI tekrarını önlemek (ör. 'One X Changed
+    Everything' formülü)."""
+    if not used_titles:
+        return ""
+    recent = used_titles[-MAX_TITLES_IN_PROMPT:]
+    lines = "\n".join(f"- {t}" for t in recent)
+    return (
+        "\n\nDAHA ÖNCE KULLANILMIŞ GERÇEK BAŞLIKLAR (bunları incele - "
+        "eğer birden fazlası AYNI CÜMLE KALIBINI kullanıyorsa, ör. "
+        "'One [Kelime] Changed Everything' ya da 'The [Kelime] That "
+        "[Kelime]' gibi bir şablon fark edersen, YENİ ADAYLARINDA BU "
+        "KALIBI KESİNLİKLE TEKRARLAMA - gramatik olarak TAMAMEN FARKLI "
+        "bir cümle yapısı kullan. Kelime tekrarı sorun değil, ASIL "
+        "SORUN CÜMLE İSKELETİNİN tekrar etmesi):\n"
+        + lines
+    )
+
 
 def call_gemini(client, prompt, model, max_tokens=800):
-    """Gemini'ye istek atar; geçici hatalarda (500/rate limit/bağlantı)
-    üstel bekleme ile otomatik olarak yeniden dener. Gemini SDK'sının
-    spesifik hata sınıfları garanti belgelenmediği için burada BİLEREK
-    geniş bir Exception yakalaması kullanılıyor - her hata türünde
-    yeniden denenir, MAX_RETRIES sonunda son hata fırlatılır."""
+    """Gemini'ye istek atar; geçici hatalarda üstel bekleme ile
+    otomatik olarak yeniden dener."""
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -76,9 +142,7 @@ def call_gemini(client, prompt, model, max_tokens=800):
 
 def load_trend_references(trends_path: str) -> list:
     """trend_analysis.py çıktısından başlık + GERÇEK performans verisini
-    (izlenme, beğeni oranı) çıkarır. En yüksek izlenmeye göre sıralı,
-    en fazla MAX_TREND_REFERENCES kadar. Dosya yoksa/okunamazsa ya da
-    boşsa boş liste döner - pipeline kırılmaz, eski davranışa düşülür."""
+    çıkarır."""
     if not trends_path or not os.path.exists(trends_path):
         return []
     try:
@@ -97,7 +161,6 @@ def load_trend_references(trends_path: str) -> list:
             engagement = round((likes / views) * 100, 2) if views else 0.0
             refs.append({"title": title, "views": views, "engagement": engagement})
 
-        # En çok izlenene göre sırala - en güçlü kanıt en üstte
         refs.sort(key=lambda r: r["views"], reverse=True)
         return refs[:MAX_TREND_REFERENCES]
     except (json.JSONDecodeError, OSError, TypeError):
@@ -105,8 +168,6 @@ def load_trend_references(trends_path: str) -> list:
 
 
 def format_trend_block(trend_refs: list) -> str:
-    """Trend referanslarını, hem üretim hem seçim adımında verilecek
-    okunabilir bir metin bloğuna çevirir."""
     if not trend_refs:
         return ""
     lines = []
@@ -114,14 +175,14 @@ def format_trend_block(trend_refs: list) -> str:
         views_str = f"{r['views']:,}".replace(",", ".")
         lines.append(f"- \"{r['title']}\" -> {views_str} izlenme, %{r['engagement']} etkileşim oranı")
     return (
-        "\n\nBU NİŞTE SON 30 GÜNDE GERÇEKTEN BÜYÜK İZLENME ALMIŞ (250k+) "
+        "\n\nBU NİŞTE SON DÖNEMDE GERÇEKTEN BÜYÜK İZLENME ALMIŞ "
         "BAŞLIKLAR - GERÇEK, DOĞRULANMIŞ VERİ (YouTube Data API):\n"
         + "\n".join(lines)
         + "\n\nBunları BİREBİR KOPYALAMA/tekrar etme. Ama şunu analiz et: "
         "bu başlıklarda ortak hangi YAPI (soru mu, iddia mı, sayı mı), "
         "hangi UZUNLUK, hangi MERAK AÇIĞI TEKNİĞİ var ve YÜKSEK etkileşim "
-        "oranına sahip olanlar (düşük etkileşimlilere göre) hangi "
-        "farkı taşıyor - kendi özgün adaylarına bu kanıtlanmış sinyali yansıt."
+        "oranına sahip olanlar hangi farkı taşıyor - kendi özgün "
+        "adaylarına bu kanıtlanmış sinyali yansıt."
     )
 
 
@@ -130,7 +191,7 @@ def main():
     parser.add_argument("--script", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--trends", required=False, default="trend.json",
-                         help="trend_analysis.py çıktısı - nişte gerçekten izlenen başlıkları referans almak için")
+                         help="trend_analysis.py çıktısı")
     args = parser.parse_args()
 
     with open(args.script, "r", encoding="utf-8") as f:
@@ -143,31 +204,45 @@ def main():
     else:
         print("  Trend referansı yok/boş, kalıp-tabanlı üretime devam ediliyor")
 
+    used_titles = load_used_titles()
+    used_titles_block = format_used_titles_block(used_titles)
+    print(f"  Geçmiş başlık sayısı (şablon tekrarı kontrolü için): {len(used_titles)}")
+
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     gen_prompt = f"""Bu script için 8 farklı YouTube başlığı öner.
 ÖNEMLİ: Başlıkların TAMAMI İNGİLİZCE olmalı, tek bir Türkçe kelime bile
 kullanma - kanal İngilizce ve global bir kitleye hitap ediyor.
 
+TON: AGRESİF ve İDDİALI ol. Yumuşak, nazik, genel-geçer ifadelerden
+KAÇIN. Her başlık okuyanı DURDURMALI - doğrudan, çarpıcı, biraz
+küstah bir özgüvenle yazılmış olsun (ör. "nobody talks about this",
+"they don't want you to know", "everyone got this wrong"). Klişe
+belgesel yumuşaklığından uzak dur.
+
 Her biri merak açığı yaratmalı (bilgiyi tam vermeden merak uyandırmalı),
 abartılı/yalan olmamalı, 60 karakteri geçmemeli, tık tuzağı olmamalı.
 
 KRİTİK KURAL - başlık kapağın CEVABI değil GELİŞMESİDİR:
-Kapak görseli izleyiciye bir soru/gizem sunar (örn. bir nesne, bir
-çelişkili durum). Başlık bu sorunun CEVABINI VERMEZ, sadece konunun
-BAĞLAMINI/GELİŞMESİNİ ekler - somut bir çelişki, rakam veya anomali
-içerir (ör. "sold for $X", "hidden for Y years", "no one noticed").
-Asıl cevap/sonuç SADECE videoyu izleyince ortaya çıkmalı. Başlık,
-kapaktaki merakı KAPATMAMALI, bir adım daha derinleştirmeli.
+Kapak görseli izleyiciye bir soru/gizem sunar. Başlık bu sorunun
+CEVABINI VERMEZ, sadece konunun BAĞLAMINI/GELİŞMESİNİ ekler - somut
+bir çelişki, rakam veya anomali içerir. Asıl cevap/sonuç SADECE
+videoyu izleyince ortaya çıkmalı.
 
-Global çapta kanıtlanmış gizem/belgesel kanallarından çıkarılan
-kalıpları kullan, adaylar bu FARKLI YAKLAŞIMLARI temsil etsin:
+CÜMLE YAPISI ÇEŞİTLİLİĞİ ZORUNLU: 8 adayın HER BİRİ FARKLI bir gramatik
+yapı kullanmalı - aynı iskeleti ("One [X] Changed Everything" gibi)
+birden fazla adayda TEKRARLAMA. Global çapta kanıtlanmış gizem/belgesel
+kanallarından çıkarılan FARKLI kalıpları kullan:
 1. Soru formatı ("Is X Really Y?", "Why Does X Happen?")
 2. "Ne oldu" gizem çerçevesi ("What Really Happened to X")
 3. Güçlü iddia + merak açığı ("The Real Reason X Never Y")
 4. Sayı/liste formatı ("X Things You Didn't Know About Y")
 5. Doğrudan izleyiciye hitap eden meydan okuma tarzı
+6. İtiraf/açığa çıkarma tarzı ("Nobody Tells You X")
+7. Zıtlık/çelişki vurgusu ("X Looked Y. It Wasn't.")
+8. Zaman baskısı/aciliyet tarzı ("For Years, X Hid This")
 {trend_block}
+{used_titles_block}
 
 SCRIPT:
 {script}
@@ -175,26 +250,25 @@ SCRIPT:
 Çıktı SADECE JSON dizi, İngilizce başlıklarla: ["title1", "title2", ...]"""
 
     raw_candidates = call_gemini(client, gen_prompt, MODEL_CREATIVE, max_tokens=1200)
-    cleaned = raw_candidates.replace("```json", "").replace("```", "").strip()
     try:
-        candidates = json.loads(cleaned)
+        candidates = extract_json_array(raw_candidates)
         if not isinstance(candidates, list) or not candidates:
             raise ValueError("boş/liste değil")
     except (json.JSONDecodeError, ValueError):
-        # Güvenli düşüş: yanıt yarıda kesildiyse/parse edilemiyorsa,
-        # jenerik tek bir aday ile devam et - pipeline asla çökmez.
-        print("  UYARI: başlık adayları parse edilemedi, jenerik yedek kullanılıyor")
+        print(f"  UYARI: başlık adayları parse edilemedi, jenerik yedek kullanılıyor. "
+              f"Ham yanıt: {raw_candidates[:200]!r}")
         candidates = ["What Really Happened Here"]
 
     rank_prompt = f"""Aşağıdaki İngilizce YouTube başlık adaylarından EN
-GÜÇLÜ tek bir tanesini seç. Kriterler: merak açığı gücü (cevabı
-vermeden gelişmeyi vermesi), netlik, özgünlük hissi, tık tuzağı
-olmaması.
+GÜÇLÜ tek bir tanesini seç. Kriterler: merak açığı gücü, netlik,
+özgünlük hissi, AGRESİFLİK/iddialılık (yumuşak/genel ifadeler DÜŞÜK
+puan almalı), tık tuzağı olmaması.
 {trend_block}
+{used_titles_block}
 Yukarıdaki kanıtlanmış (gerçek izlenme verili) başlıklarla yapısal
-benzerlik taşıyan adaylara, diğer her şey eşitken, hafif öncelik ver -
-ama asıl kriter hâlâ merak açığı gücü ve özgünlük, sadece kanıtlanmış
-patern eşleşmesi değil.
+benzerlik taşıyan adaylara hafif öncelik ver - ama DAHA ÖNCE
+KULLANILMIŞ ŞABLONLARLA aynı cümle iskeletini taşıyan bir aday varsa
+o adayı SEÇME, diğer adayları tercih et.
 
 ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 
@@ -202,14 +276,11 @@ ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 {{"selected": "title", "reason": "gerekçe"}}"""
 
     raw_rank = call_gemini(client, rank_prompt, MODEL_UTILITY, max_tokens=600)
-    cleaned_rank = raw_rank.replace("```json", "").replace("```", "").strip()
     try:
-        result = json.loads(cleaned_rank)
+        result = extract_json_object(raw_rank)
     except json.JSONDecodeError:
-        # Güvenli düşüş: yanıt yarıda kesildiyse/parse edilemiyorsa,
-        # ilk adayı seç - pipeline asla bu yüzden çökmez.
-        print("  UYARI: seçim yanıtı parse edilemedi (muhtemelen yarıda "
-              "kesildi), ilk aday başlık kullanılıyor")
+        print(f"  UYARI: seçim yanıtı parse edilemedi, ilk aday başlık kullanılıyor. "
+              f"Ham yanıt: {raw_rank[:200]!r}")
         result = {"selected": candidates[0], "reason": "otomatik yedek seçim (parse hatası)"}
 
     final_title = result["selected"]
@@ -220,6 +291,10 @@ ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
+
+    # Seçilen başlık, gelecekteki şablon tekrarı kontrolü için kaydedilir.
+    used_titles.append(final_title)
+    save_used_titles(used_titles)
 
     print(f"Seçilen başlık: {final_title}  ({result['reason']})")
 
