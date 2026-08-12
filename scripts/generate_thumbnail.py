@@ -29,6 +29,26 @@ görsel/metin üretiliyor. Kapak görselleri sadece SOYUT PATERN (kontrast,
 renk, kompozisyon) çıkarmak için kullanılır, hiçbir spesifik nesne/
 logo/kişi kopyalanmaz (bkz. analyze_thumbnail_patterns).
 
+KENDİ GEÇMİŞ KAPAKLARINDAN ÇEŞİTLİLİK KONTROLÜ (bugün eklendi):
+trend_analysis.py'nin dış trend kapaklarını referans alması gibi,
+generate_thumbnail.py artık KENDİ kanalının son 3 videosunun gerçek
+kapaklarını da (YouTube OAuth ile) çekip Gemini'ye gösteriyor - ama
+"bu stili taklit et" için değil, "bu spesifik motifleri (ör. çatlak
+nesne + kırmızı parlayan çekirdek) TEKRARLAMA" diye. Bu, art arda
+neredeyse birebir aynı görünen kapakların üretilmesini önlemek için
+eklendi. Bkz. get_own_recent_thumbnails, analyze_own_thumbnail_diversity.
+
+BUGÜNKÜ KRİTİK BUG DÜZELTMESİ (JSON parse): generate_thumbnail_concept
+ve locate_emphasis_point, Gemini'nin yanıtını saf json.loads() ile
+parse ediyordu - Gemini yanıtın başına/sonuna açıklama metni eklediğinde
+bu SESSIZCE ÇÖKÜYORDU ve generate_thumbnail_concept HER SEFERİNDE aynı
+sabit yedek değere ("a mysterious object under dramatic lighting,
+close-up on one strange unexplained detail" + "NEVER EXPLAINED")
+düşüyordu. Bu, art arda üretilen kapakların neden hep aynı klişeye
+(çatlak nesne + kırmızı çekirdek) yakınsadığının ASIL SEBEBIYDI. Artık
+extract_json_object() ile JSON gövdesi metin içinden güvenilir şekilde
+çıkarılıyor, bu fallback artık neredeyse hiç tetiklenmeyecek.
+
 NOT: YouTube'un native A/B testi (Test & Compare) API'den erişilemiyor
 ve YPP üyeliği gerektiriyor, bu yüzden sistem artık çoklu kapak yerine
 tek, en güçlü kapağı üretiyor (bkz. generate_titles.py).
@@ -60,6 +80,12 @@ performans gösterdiğini gösterdi. Bu yüzden:
 Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/ --script script.md --trends trend.json
+
+Ortam değişkenleri:
+    GEMINI_API_KEY (zorunlu)
+    YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN (opsiyonel - kendi
+      geçmiş kapaklarından çeşitlilik kontrolü için; verilmezse bu adım
+      sessizce atlanır, kapak üretimi normal devam eder)
 """
 import argparse
 import json
@@ -82,6 +108,10 @@ MODEL_IMAGE = "gemini-2.5-flash-image"  # "Nano Banana" - kapak arka planı üre
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
+
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+MAX_OWN_THUMBNAILS = 3  # çeşitlilik kontrolü için en fazla kaç geçmiş kapak
 
 THUMBNAIL_STYLE = (
     "bright, vivid, eye-catching mystery-documentary YouTube thumbnail "
@@ -106,35 +136,54 @@ BRAND_SAFETY_INSTRUCTION = (
 
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 
-# Kanal logosunun rengi (sarı-yeşil/lime) - çerçeve için kullanılıyor.
 BORDER_COLOR = (205, 220, 57)
-BORDER_WIDTH = 4  # piksel
+BORDER_WIDTH = 4
 
 TEXT_COLOR_PALETTE = [
-    (255, 255, 255),  # beyaz - klasik, her zaman okunaklı
-    (255, 214, 0),    # sarı - dikkat çekici, gizem/uyarı hissi
+    (255, 255, 255),
+    (255, 214, 0),
 ]
-# NOT: Kırmızı BİLEREK metin paletinden çıkarıldı - artık EMPHASIS_COLOR
-# ile aynı renk olurdu (vurgu halkası da kırmızı), bu da metin ile
-# vurgu halkasının görsel olarak birbirine karışmasına/çakışmasına
-# yol açıyordu (VidIQ kapak puanı bunu doğruladı: 26/100). Artık net
-# bir hiyerarşi var: KIRMIZI = "buraya bak" (nesne vurgusu),
-# BEYAZ/SARI = "bunu oku" (metin) - ikisi asla aynı anda kırmızı olmaz.
 
-# Kırmızı vurgu elementinin (halka/ok) rengi - nesnenin kritik
-# noktasını işaret eder, izleyicinin bakışını konuya kilitler.
 EMPHASIS_COLOR = (230, 30, 30)
 
-MAX_TREND_TITLES = 8  # prompt'a en fazla kaç trend başlığı eklensin
-MAX_TREND_THUMBNAILS = 3  # görsel patern analizine en fazla kaç gerçek kapak verilsin
+MAX_TREND_TITLES = 8
+MAX_TREND_THUMBNAILS = 3
+
+FALLBACK_CONCEPTS = [
+    {
+        "visual_prompt": "a weathered object resting on a wooden desk under "
+                          "warm desk-lamp light, long dramatic shadow, "
+                          "shallow depth of field",
+        "hook_text": "NEVER EXPLAINED",
+        "emphasis_target": "the most worn/damaged part of the object",
+    },
+    {
+        "visual_prompt": "a single object frozen mid-motion against a stark "
+                          "dark background, cool blue rim lighting, high "
+                          "contrast silhouette",
+        "hook_text": "THE REAL REASON",
+        "emphasis_target": "the sharpest edge or corner of the object",
+    },
+    {
+        "visual_prompt": "an object photographed from a low dramatic angle, "
+                          "dusty golden-hour light streaming across it, "
+                          "gritty documentary texture",
+        "hook_text": "HIDDEN COST",
+        "emphasis_target": "the center of the object where light and shadow meet",
+    },
+]
+
+
+def extract_json_object(raw: str) -> dict:
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise json.JSONDecodeError("JSON objesi bulunamadı", cleaned, 0)
+    return json.loads(cleaned[start:end + 1])
 
 
 def call_gemini(client, contents, max_tokens=600):
-    """Gemini'ye istek atar (metin ya da vision, contents string ya da
-    liste olabilir); geçici hatalarda üstel bekleme ile otomatik olarak
-    yeniden dener. Gemini SDK'sının spesifik hata sınıfları garanti
-    belgelenmediği için BİLEREK geniş bir Exception yakalaması
-    kullanılıyor - her hata türünde yeniden denenir."""
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -156,10 +205,6 @@ def call_gemini(client, contents, max_tokens=600):
 
 
 def load_trend_thumbnail_urls(trends_path: str) -> list:
-    """trend_analysis.py çıktısından, en çok izlenen videoların GERÇEK
-    kapak görseli URL'lerini çıkarır (en fazla MAX_TREND_THUMBNAILS
-    kadar). Dosya yoksa/boşsa/URL yoksa boş liste döner - pipeline
-    kırılmaz, çağıran taraf stil analizini atlar."""
     if not trends_path or not os.path.exists(trends_path):
         return []
     try:
@@ -175,15 +220,6 @@ def load_trend_thumbnail_urls(trends_path: str) -> list:
 
 
 def analyze_thumbnail_patterns(client, thumbnail_urls: list):
-    """Nişte gerçekten yüksek performans göstermiş kapakları Gemini'ye
-    (vision) gösterip SADECE soyut stil/kompozisyon paternini (kontrast,
-    renk paleti, konu yerleşimi, ışık) çıkarttırır. Gemini'ye AÇIKÇA
-    hiçbir görseli/nesneyi/logoyu/kişiyi birebir tarif etmemesi, sadece
-    genel eğilimi özetlemesi söylenir - bu, üretilecek YENİ görsele
-    kopya değil sadece stil sinyali olarak yansıtılır (tıpkı trend
-    başlıklarının kullanılma şekli gibi). Görsellerden biri/hepsi
-    indirilemezse ya da analiz başarısız olursa None döner - kapak
-    üretimi bu referans olmadan normal şekilde devam eder."""
     if not thumbnail_urls:
         return None
 
@@ -194,7 +230,7 @@ def analyze_thumbnail_patterns(client, thumbnail_urls: list):
             resp.raise_for_status()
             image_parts.append(types.Part.from_bytes(data=resp.content, mime_type="image/jpeg"))
         except Exception:
-            continue  # bu görsel indirilemedi, diğerleriyle devam
+            continue
 
     if not image_parts:
         return None
@@ -219,10 +255,102 @@ def analyze_thumbnail_patterns(client, thumbnail_urls: list):
         return None
 
 
+def get_youtube_access_token():
+    client_id = os.environ.get("YT_CLIENT_ID")
+    client_secret = os.environ.get("YT_CLIENT_SECRET")
+    refresh_token = os.environ.get("YT_REFRESH_TOKEN")
+    if not (client_id and client_secret and refresh_token):
+        return None
+    try:
+        resp = requests.post(TOKEN_URL, data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }, timeout=30)
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+    except requests.RequestException as e:
+        print(f"  UYARI: YouTube erişim token'ı alınamadı ({type(e).__name__}), "
+              f"kendi kapak çeşitliliği kontrolü atlanıyor")
+        return None
+
+
+def get_own_recent_thumbnails(access_token: str, max_results: int = MAX_OWN_THUMBNAILS) -> list:
+    if not access_token:
+        return []
+    try:
+        resp = requests.get(YOUTUBE_SEARCH_URL, params={
+            "part": "snippet",
+            "forMine": "true",
+            "type": "video",
+            "order": "date",
+            "maxResults": max_results,
+        }, headers={"Authorization": f"Bearer {access_token}"}, timeout=30)
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        urls = []
+        for item in items:
+            thumbs = item.get("snippet", {}).get("thumbnails", {})
+            for quality in ("high", "medium", "default"):
+                url = thumbs.get(quality, {}).get("url", "")
+                if url:
+                    urls.append(url)
+                    break
+        return urls
+    except requests.RequestException as e:
+        print(f"  UYARI: kendi geçmiş kapakları çekilemedi ({type(e).__name__}), "
+              f"çeşitlilik kontrolü atlanıyor")
+        return []
+
+
+def analyze_own_thumbnail_diversity(client, own_thumbnail_urls: list):
+    if not own_thumbnail_urls:
+        return None
+
+    image_parts = []
+    for url in own_thumbnail_urls:
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            image_parts.append(types.Part.from_bytes(data=resp.content, mime_type="image/jpeg"))
+        except Exception:
+            continue
+
+    if not image_parts:
+        return None
+
+    prompt_text = (
+        "Bu görseller, AYNI YouTube kanalının EN SON yüklediği videoların "
+        "kapaklarıdır (kronolojik sırada, en yeni dahil). Görevin: bu "
+        "kapaklar arasında TEKRAR EDEN spesifik görsel motifleri tespit "
+        "etmek (ör. 'çatlak/kırık bir nesne', 'nesnenin içinden parlayan "
+        "kırmızı/turuncu ışık', 'aynı kamera açısı', 'aynı renk paleti'). "
+        "Amaç, BİR SONRAKİ kapağın bu motifleri TEKRARLAMAMASI için bir "
+        "'kaçınılacaklar' listesi çıkarmak - kanalın genel kalite/ton "
+        "tutarlılığından BAHSETME, sadece spesifik, somut, tekrar eden "
+        "görsel öğeleri listele. Eğer belirgin bir tekrar yoksa, boş "
+        "liste döndür.\n\n"
+        "Çıktı SADECE JSON dizi, kısa maddeler halinde: "
+        '["motif 1", "motif 2"] ya da tekrar yoksa []'
+    )
+    try:
+        raw = call_gemini(client, image_parts + [prompt_text], max_tokens=200)
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        start = cleaned.find("[")
+        end = cleaned.rfind("]")
+        if start == -1 or end == -1:
+            return None
+        motifs = json.loads(cleaned[start:end + 1])
+        if isinstance(motifs, list) and motifs:
+            return [str(m).strip() for m in motifs if str(m).strip()]
+        return None
+    except Exception as e:
+        print(f"  UYARI: kendi kapak çeşitlilik analizi başarısız ({type(e).__name__}), atlanıyor")
+        return None
+
+
 def load_trend_titles(trends_path: str) -> list:
-    """trend_analysis.py çıktısından SADECE başlıkları (görsel/link
-    değil) çıkarır - en çok izlenen ilk MAX_TREND_TITLES kadarını.
-    Dosya yoksa ya da okunamazsa boş liste döner, pipeline kırılmaz."""
     if not trends_path or not os.path.exists(trends_path):
         return []
     try:
@@ -236,12 +364,8 @@ def load_trend_titles(trends_path: str) -> list:
 
 
 def generate_thumbnail_concept(client, title: str, script_excerpt: str,
-                                trend_titles: list, style_summary: str = None) -> dict:
-    """
-    Başlıktan BAĞIMSIZ bir kapak konsepti üretir: bir görsel açıklama
-    (image prompt), çok kısa bir kışkırtıcı metin (hook text) VE kırmızı
-    vurgu halkasının nereye çizileceğini belirleyen bir hedef tarifi.
-    """
+                                trend_titles: list, style_summary: str = None,
+                                avoid_motifs: list = None) -> dict:
     trend_block = ""
     if trend_titles:
         trend_block = (
@@ -262,6 +386,17 @@ def generate_thumbnail_concept(client, title: str, script_excerpt: str,
             + style_summary
         )
 
+    avoid_block = ""
+    if avoid_motifs:
+        avoid_block = (
+            "\n\nÇEŞİTLİLİK ZORUNLULUĞU - BU MOTİFLERİ KESİNLİKLE TEKRARLAMA: "
+            "Bu kanalın SON kapaklarında şu spesifik görsel öğeler tekrar "
+            "tekrar kullanılmış, bu yüzden visual_prompt'un bunlardan "
+            "GERÇEKTEN FARKLI olmalı (farklı nesne türü, farklı ışık "
+            "kaynağı/rengi, farklı kompozyon/açı):\n"
+            + "\n".join(f"- KAÇIN: {m}" for m in avoid_motifs)
+        )
+
     prompt = f"""Bir YouTube kapak görseli (thumbnail) konsepti üret.
 
 KESİN KURAL: Bu kapak, aşağıdaki başlıkla AYNI bilgiyi VERMEMELİ.
@@ -275,6 +410,7 @@ SCRIPT'TEN KISA ALINTI (konunun özünü anlamak için, kapak metnine
 doğrudan kopyalama): {script_excerpt[:800]}
 {trend_block}
 {style_block}
+{avoid_block}
 
 Üret:
 1. "visual_prompt": İngilizce, somut, TEK BİR NESNEYE/DETAYA odaklanan
@@ -300,22 +436,15 @@ doğrudan kopyalama): {script_excerpt[:800]}
 Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "emphasis_target": "..."}}"""
 
     raw = call_gemini(client, prompt)
-    cleaned = raw.replace("```json", "").replace("```", "").strip()
     try:
-        return json.loads(cleaned)
+        return extract_json_object(raw)
     except json.JSONDecodeError:
-        # Güvenli düşüş: jenerik bir konsept
-        return {
-            "visual_prompt": "a mysterious object under dramatic lighting, "
-                              "close-up on one strange unexplained detail",
-            "hook_text": "NEVER EXPLAINED",
-            "emphasis_target": "the most visually distinctive detail in the center of the frame",
-        }
+        print(f"  UYARI: kapak konsepti JSON parse edilemedi, çeşitli "
+              f"yedeklerden biri kullanılıyor. Ham yanıt: {raw[:200]!r}")
+        return random.choice(FALLBACK_CONCEPTS)
 
 
 def _extract_gemini_image_bytes(response):
-    """Gemini yanıtındaki content parts içinden ilk görsel veriyi
-    çıkarır. Bulamazsa None döner."""
     try:
         for part in response.candidates[0].content.parts:
             if getattr(part, "inline_data", None) and part.inline_data.data:
@@ -326,11 +455,6 @@ def _extract_gemini_image_bytes(response):
 
 
 def generate_background(client, prompt: str, out_path: str):
-    """Kapak arka planını Gemini (gemini-2.5-flash-image / Nano Banana)
-    ile üretir. Marka/telif ve metin güvenliği için prompt'a açık bir
-    kısıt eklenir (BRAND_SAFETY_INSTRUCTION). Üretim başarısız olursa
-    (güvenlik reddi, boş yanıt vb.) jenerik/soyut bir tarifle bir kez
-    daha denenir - pipeline kırılmaz."""
     full_prompt = f"{THUMBNAIL_STYLE}. Subject: {prompt}.{BRAND_SAFETY_INSTRUCTION}"
 
     def _call(p: str):
@@ -366,8 +490,6 @@ def generate_background(client, prompt: str, out_path: str):
 
 
 def draw_border(draw, img_w, img_h):
-    """Dört kenara, kanal logosunun renginde ince bir çerçeve çizer
-    (marka tutarlılığı için)."""
     for i in range(BORDER_WIDTH):
         draw.rectangle(
             [i, i, img_w - 1 - i, img_h - 1 - i],
@@ -377,12 +499,6 @@ def draw_border(draw, img_w, img_h):
 
 def locate_emphasis_point(client, image_path: str, emphasis_target: str,
                            img_w: int, img_h: int):
-    """Gemini'ye (vision) üretilen görseli gösterip emphasis_target'ın
-    TAM piksel koordinatını ve yaklaşık boyutunu sordurur. İki deneme
-    hakkı var (geçici hata/parse sorunu için). İkisi de başarısız
-    olursa None döner - çağıran taraf SABİT/ALAKASIZ bir yere halka
-    çizmek yerine halkayı TAMAMEN ATLAR (yanlış yere vurgu, hiç vurgu
-    olmamasından daha kötü olur)."""
     for attempt in range(2):
         try:
             with open(image_path, "rb") as f:
@@ -400,8 +516,7 @@ def locate_emphasis_point(client, image_path: str, emphasis_target: str,
                 f"\"y\": <int>, \"radius\": <int>}} ya da {{\"found\": false}}"
             )
             raw = call_gemini(client, [image_part, prompt], max_tokens=150)
-            cleaned = raw.replace("```json", "").replace("```", "").strip()
-            result = json.loads(cleaned)
+            result = extract_json_object(raw)
 
             if not result.get("found", False):
                 print(f"  UYARI: Gemini vurgu noktasını görselde bulamadı "
@@ -424,8 +539,6 @@ def locate_emphasis_point(client, image_path: str, emphasis_target: str,
 
 
 def draw_emphasis_ring(img: Image.Image, center_x: int, center_y: int, radius: int):
-    """Nesnenin kritik noktasının etrafına kırmızı, hafif kalın bir
-    vurgu halkası çizer - izleyicinin bakışını konuya kilitler."""
     draw = ImageDraw.Draw(img, "RGBA")
     ring_width = max(4, int(radius * 0.06))
     for i in range(ring_width):
@@ -440,9 +553,6 @@ def draw_emphasis_ring(img: Image.Image, center_x: int, center_y: int, radius: i
 def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, out_path: str):
     img = Image.open(image_path).convert("RGB")
 
-    # Vurgu halkası ÖNCE eklenir ki metin kutusu onun üstünde net kalsın.
-    # Nokta bulunamazsa (None) halka HİÇ ÇİZİLMEZ - alakasız/yanlış bir
-    # yere halka koymaktansa temiz kapak tercih edilir.
     emphasis_point = locate_emphasis_point(client, image_path, emphasis_target,
                                             img.width, img.height)
     if emphasis_point:
@@ -497,7 +607,6 @@ def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, 
     text_color = random.choice(TEXT_COLOR_PALETTE)
     draw.multiline_text((x, y), wrapped, font=font, fill=(*text_color, 255), spacing=10)
 
-    # En son, her şeyin üstüne kanal renginde ince çerçeve
     draw_border(draw, img.width, img.height)
 
     img.save(out_path)
@@ -540,7 +649,22 @@ def main():
         else:
             print("  Kapak stil analizi başarısız/boş, referanssız devam ediliyor")
 
-    concept = generate_thumbnail_concept(client, title, script_excerpt, trend_titles, style_summary)
+    avoid_motifs = None
+    yt_access_token = get_youtube_access_token()
+    if yt_access_token:
+        own_thumbnail_urls = get_own_recent_thumbnails(yt_access_token)
+        if own_thumbnail_urls:
+            avoid_motifs = analyze_own_thumbnail_diversity(client, own_thumbnail_urls)
+            if avoid_motifs:
+                print(f"  Son {len(own_thumbnail_urls)} kapaktan {len(avoid_motifs)} "
+                      f"tekrar eden motif tespit edildi, kaçınılacak: {avoid_motifs}")
+            else:
+                print("  Kendi kapaklarında belirgin bir tekrar tespit edilmedi")
+    else:
+        print("  YT OAuth bilgisi yok, kendi kapak çeşitliliği kontrolü atlanıyor")
+
+    concept = generate_thumbnail_concept(client, title, script_excerpt, trend_titles,
+                                          style_summary, avoid_motifs)
 
     raw_path = os.path.join(args.out_dir, "raw_1.png")
     generate_background(client, concept["visual_prompt"], raw_path)
