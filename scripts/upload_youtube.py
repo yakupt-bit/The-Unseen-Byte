@@ -516,19 +516,26 @@ def compute_publish_at() -> str | None:
     Şu an TR saatiyle hedef saati geçmediyse, bugün TARGET_PUBLISH_HOUR_TR
     saatinin UTC/RFC3339 karşılığını döndürür (zamanlı yayın için).
     Hedef saat zaten geçtiyse None döner (bu, "hemen yayınla" demektir).
+
+    NOT (bugün eklendi): Yayın dakikası artık HER ZAMAN tam saat (:00)
+    değil - 10 ile 20 dakika arasında RASTGELE bir kayma uygulanıyor
+    (ör. 21:13, 21:07, 21:19 gibi). Amaç, global kitleye hep "tam saat
+    başında" yayınlanan bot-gibi bir düzen yerine daha doğal/organik
+    görünen bir zamanlama vermek.
     """
+    import random
+
     tr_tz = timezone(timedelta(hours=3))  # Europe/Istanbul (DST'siz sabit ofset)
     now_tr = datetime.now(tr_tz)
+    random_minute = random.randint(10, 20)
     target_tr = now_tr.replace(
-        hour=TARGET_PUBLISH_HOUR_TR, minute=0, second=0, microsecond=0
+        hour=TARGET_PUBLISH_HOUR_TR, minute=random_minute, second=0, microsecond=0
     )
 
     if now_tr >= target_tr:
         return None
 
     return target_tr.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 def get_access_token() -> str:
     resp = requests.post(TOKEN_URL, data={
         "client_id": os.environ["YT_CLIENT_ID"],
