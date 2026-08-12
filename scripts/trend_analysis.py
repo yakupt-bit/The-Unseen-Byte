@@ -1,10 +1,10 @@
 """
 YouTube Data API ile, o koşunun konusuna göre Claude'un ürettiği
-arama terimleriyle, SON 30 GÜN içinde yayınlanmış ve 250.000+ izlenme
-almış videoları çeker; başlık kalıplarını ve performans verisini
-trend.json'a kaydeder. Bu dosya sonra generate_script.py ve
-generate_thumbnail.py tarafından "şu an gerçekten patlayan formatlar"
-referansı olarak kullanılır.
+arama terimleriyle, KONUYLA ALAKALI ve yüksek izlenmeli videoları
+çeker; başlık kalıplarını ve performans verisini trend.json'a
+kaydeder. Bu dosya sonra generate_script.py ve generate_thumbnail.py
+tarafından "şu an gerçekten patlayan formatlar" referansı olarak
+kullanılır.
 
 KAPAK GÖRSELİ REFERANSI: Her kaydedilen videonun GERÇEK kapak görseli
 URL'i de (thumbnail_url) tutuluyor - generate_thumbnail.py bunları
@@ -16,30 +16,30 @@ analyze_thumbnail_patterns fonksiyonuna bakın.
 NEDEN SABİT KANAL LİSTESİ DEĞİL: Sabit bir rakip kanal listesi zamanla
 hep aynı sonuçları getirir (tekrar riski). Bunun yerine, HER KOŞUDA
 Claude o videonun konusuna özel 1-3 arama terimi üretir, bu terimlerle
-YouTube'da GERÇEKTEN TAZE (son 30 gün) ve GERÇEKTEN BÜYÜK (250k+
-izlenme) videolar aranır - hem tekrar riski yok hem de her zaman güncel.
+YouTube'da GERÇEKTEN alakalı ve GERÇEKTEN BÜYÜK videolar aranır - hem
+tekrar riski yok hem de her zaman güncel.
 
-NEDEN "SON 30 GÜN" (AY BAŞI DEĞİL): Ayın başından itibaren saymak,
-ayın erken günlerinde (örn. ayın 2'si) neredeyse hiç video bulunamaması
-riskini taşır. Her zaman geriye dönük 30 günlük hareketli bir pencere
-kullanmak, hangi güne denk gelirsek gelelim tutarlı sonuç verir.
+KADEMELİ ARAMA (bugün eklendi): Tek bir zaman/eşik kombinasyonu yerine,
+üç seviyeli bir arama yapılıyor - her seviye AYNI konuya özel arama
+terimlerini kullanır, sadece zaman penceresi ve izlenme eşiği gevşer:
+  1. Son 90 gün, 250.000+ izlenme (TIER1_DAYS / TIER1_MIN_VIEWS)
+  2. Boşsa: son 365 gün, 2.000.000+ izlenme (TIER2_DAYS / TIER2_MIN_VIEWS)
+  3. O da boşsa: son 365 gün, eşiksiz (son çare - ama YİNE DE konuya
+     özel arama terimleriyle, ASLA alakasız/genel bir aramaya düşülmez)
 
-GÜVENLİK AĞI: Yüksek-performans araması hiç sonuç getirmezse (küçük/niş
-bir konu için son 30 günde yeterince büyük video olmayabilir), otomatik
-olarak eski/genel niş aramasına (60 günlük, eşiksiz) düşülür -
-trend.json asla boş kalmaz, pipeline asla kırılmaz.
-
-SORGU ÖNCELİK SIRASI:
-  1. --query elle verildiyse, DOĞRUDAN genel niş araması yapılır
-     (yüksek-performans mantığı atlanır).
-  2. Verilmediyse, TOPIC_HINT üzerinden Claude'a arama terimleri
-     ürettirilip son-30-gün yüksek-performans araması denenir.
-  3. O da sonuç vermezse, TOPIC_HINT ya da QUERY_POOL ile genel niş
-     araması yapılır (eski davranış, yedek).
+ESKİ DAVRANIŞ NEDEN DEĞİŞTİ: Önceki sürümde, yüksek-performans araması
+boş dönerse "genel niş aramasına" düşülüyordu - bu genel arama, konu
+başlığının bir kısmını (topic_hint.split(" - ")[0]) DOĞRUDAN YouTube'a
+sorgu olarak gönderiyordu, izlenme eşiği YOKTU, ve alakasızlık riski
+kontrol edilmiyordu. Pratikte bu durum, "1967 Six-Day War" veya
+"3 August Army Meeting" gibi gaming ile HİÇ ilgisi olmayan videoların
+trend referansı olarak kullanılmasına yol açtı. Yeni mantıkta, HER
+seviye aynı (Claude'un konuya özel ürettiği) arama terimlerini
+kullanıyor - sadece zaman/eşik gevşiyor, konu odağı hiç kaybolmuyor.
 
 Not: YouTube Data API günlük kota sınırlıdır (varsayılan 10.000 birim/gün,
 search.list çağrısı 100 birim tutar). Bu script çalışma başına en fazla
-~4 search.list çağrısı yapar (1-3 anahtar kelime + olası yedek arama),
+~9 search.list çağrısı yapar (3 seviye x en fazla 3 anahtar kelime),
 güvenli aralıkta kalır.
 
 Kullanım:
@@ -58,12 +58,17 @@ import requests
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
-MIN_VIEWS_THIS_MONTH = 250_000
+# Kademeli arama seviyeleri: (gün, minimum izlenme, kaynak etiketi)
+TIER1_DAYS, TIER1_MIN_VIEWS = 90, 250_000
+TIER2_DAYS, TIER2_MIN_VIEWS = 365, 2_000_000
+TIER3_DAYS, TIER3_MIN_VIEWS = 365, 0  # son çare - eşiksiz ama YİNE konuya özel
+
 MAX_KEYWORDS = 3
 RESULTS_PER_KEYWORD = 15
 
-# Sadece Claude anahtar kelime üretemezse ya da TOPIC_HINT hiç yoksa
-# (elle/manuel çalıştırma) devreye giren yedek havuz.
+# Sadece Claude anahtar kelime üretemezse (TOPIC_HINT hiç yoksa,
+# elle/manuel çalıştırma) devreye giren yedek havuz - bu durumda bile
+# arama terimleri niş ile ilgili kalır, tamamen rastgele değildir.
 QUERY_POOL = [
     "gaming psychology facts documentary",
     "video game history mystery",
@@ -83,14 +88,14 @@ QUERY_POOL = [
 def generate_search_keywords(topic_hint: str, client) -> list:
     """Konuya özel, YouTube'da arama yapmaya uygun 1-3 kısa terim
     üretir (Claude Haiku ile, ucuz). Başarısız olursa boş liste döner
-    - çağıran taraf eski/genel yönteme düşer, pipeline kırılmaz."""
+    - çağıran taraf QUERY_POOL'a düşer, pipeline kırılmaz."""
     if not topic_hint:
         return []
     try:
         prompt = f"""Bu YouTube video konusuna göre, YouTube arama
 kutusunda kullanılacak 1 ila 3 arasında KISA (2-4 kelime), spesifik
-arama terimi üret. Amaç: bu konuyla GERÇEKTEN alakalı, son 30 günde
-YouTube'da yayınlanmış popüler videoları bulmak.
+arama terimi üret. Amaç: bu konuyla GERÇEKTEN alakalı, popüler
+videoları bulmak.
 
 KONU: {topic_hint}
 
@@ -110,11 +115,11 @@ KONU: {topic_hint}
     return []
 
 
-def last_30_days_iso() -> str:
-    """Ayın kaçı olduğuna bakmadan, HER ZAMAN son 30 günü kapsayan
-    hareketli bir pencere döndürür - ayın erken günlerinde neredeyse
-    hiç video bulunamaması riskini ortadan kaldırır."""
-    start = datetime.datetime.utcnow() - datetime.timedelta(days=30)
+def days_ago_iso(days: int) -> str:
+    """Bugünden geriye doğru N günlük hareketli bir pencere başlangıcı
+    döndürür - ayın/yılın hangi gününde olursak olalım tutarlı sonuç
+    verir."""
+    start = datetime.datetime.utcnow() - datetime.timedelta(days=days)
     return start.isoformat("T") + "Z"
 
 
@@ -185,16 +190,12 @@ def fetch_stats(video_ids: list, api_key: str, source_label: str) -> list:
     return results
 
 
-def fetch_monthly_high_performers(topic_hint: str, api_key: str, client) -> list:
-    """Son 30 günde yayınlanmış ve MIN_VIEWS_THIS_MONTH üzerinde
-    izlenme almış videoları, konuya özel arama terimleriyle bulur.
-    Hiç sonuç yoksa boş liste döner (çağıran taraf yedeğe düşer)."""
-    keywords = generate_search_keywords(topic_hint, client)
-    if not keywords:
-        return []
-
-    print(f"  Üretilen arama terimleri: {keywords}")
-    published_after = last_30_days_iso()
+def fetch_tier(keywords: list, api_key: str, days: int, min_views: int,
+               source_label: str) -> list:
+    """Verilen arama terimleriyle, belirtilen gün penceresi içinde
+    yayınlanmış ve min_views üzerinde izlenmiş videoları bulur.
+    min_views=0 ise eşik uygulanmaz (son çare seviyesi için)."""
+    published_after = days_ago_iso(days)
 
     all_ids = set()
     for kw in keywords:
@@ -204,51 +205,76 @@ def fetch_monthly_high_performers(topic_hint: str, api_key: str, client) -> list
     if not all_ids:
         return []
 
-    all_stats = fetch_stats(list(all_ids), api_key, source_label="monthly_high_performer")
-    high_performers = [v for v in all_stats if v["views"] >= MIN_VIEWS_THIS_MONTH]
-    return sorted(high_performers, key=lambda x: x["views"], reverse=True)
+    all_stats = fetch_stats(list(all_ids), api_key, source_label=source_label)
+    filtered = [v for v in all_stats if v["views"] >= min_views]
+    return sorted(filtered, key=lambda x: x["views"], reverse=True)
 
 
-def fetch_general_niche_fallback(query: str, api_key: str) -> list:
-    """Eski/genel yöntem: son 60 günün en çok izlenenleri, izlenme eşiği
-    olmadan. Yüksek-performans araması boş dönerse devreye girer."""
-    published_after = (
-        datetime.datetime.utcnow() - datetime.timedelta(days=60)
-    ).isoformat("T") + "Z"
-    ids = search_video_ids(query, api_key, published_after, 15)
-    return fetch_stats(ids, api_key, source_label="niche_fallback")
+def fetch_trending_for_topic(topic_hint: str, api_key: str, client) -> list:
+    """Kademeli arama: önce son 90 gün + 250k, boşsa son 365 gün + 2M,
+    o da boşsa son 365 gün eşiksiz (ama HER ZAMAN aynı konuya özel
+    arama terimleriyle - alakasız bir genel aramaya asla düşülmez).
+    Anahtar kelime üretilemezse QUERY_POOL'dan rastgele niş-ilişkili
+    bir terim kullanılır (tamamen alakasız değildir)."""
+    keywords = generate_search_keywords(topic_hint, client)
+    if not keywords:
+        keywords = [random.choice(QUERY_POOL)]
+        print(f"  Konuya özel terim üretilemedi, niş havuzundan kullanılıyor: {keywords}")
+    else:
+        print(f"  Üretilen arama terimleri: {keywords}")
+
+    print(f"  [Seviye 1] Son {TIER1_DAYS} gün, {TIER1_MIN_VIEWS:,}+ izlenme aranıyor...")
+    result = fetch_tier(keywords, api_key, TIER1_DAYS, TIER1_MIN_VIEWS, "tier1_quarter_high_performer")
+    if result:
+        return result
+
+    print(f"  Seviye 1 sonuçsuz. [Seviye 2] Son {TIER2_DAYS} gün, {TIER2_MIN_VIEWS:,}+ izlenme aranıyor...")
+    result = fetch_tier(keywords, api_key, TIER2_DAYS, TIER2_MIN_VIEWS, "tier2_yearly_high_performer")
+    if result:
+        return result
+
+    print(f"  Seviye 2 sonuçsuz. [Seviye 3 - son çare] Son {TIER3_DAYS} gün, eşiksiz aranıyor...")
+    result = fetch_tier(keywords, api_key, TIER3_DAYS, TIER3_MIN_VIEWS, "tier3_relaxed")
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--query", required=False, default="",
-                         help="Elle arama terimi verilirse yüksek-performans mantığı atlanır, direkt genel niş araması yapılır")
+                         help="Elle arama terimi verilirse, o terimle doğrudan kademeli arama yapılır")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
     api_key = os.environ["YOUTUBE_API_KEY"]
     topic_hint = os.environ.get("TOPIC_HINT", "").strip()
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     if args.query.strip():
-        print(f"Elle sorgu verildi: \"{args.query.strip()}\" - genel niş araması yapılıyor")
-        trend_data = fetch_general_niche_fallback(args.query.strip(), api_key)
-    else:
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        print(f"Konu: \"{topic_hint or '(belirtilmemiş)'}\" - son 30 günün yüksek-performanslı "
-              f"videoları (250k+ izlenme) aranıyor...")
-        trend_data = fetch_monthly_high_performers(topic_hint, api_key, client)
-
+        print(f"Elle sorgu verildi: \"{args.query.strip()}\" - kademeli arama yapılıyor")
+        keywords = [args.query.strip()]
+        print(f"  [Seviye 1] Son {TIER1_DAYS} gün, {TIER1_MIN_VIEWS:,}+ izlenme aranıyor...")
+        trend_data = fetch_tier(keywords, api_key, TIER1_DAYS, TIER1_MIN_VIEWS, "tier1_quarter_high_performer")
         if not trend_data:
-            print("  Yüksek-performans araması sonuçsuz, genel niş aramasına düşülüyor...")
-            fallback_query = topic_hint.split(" - ")[0].strip() if topic_hint else random.choice(QUERY_POOL)
-            trend_data = fetch_general_niche_fallback(fallback_query, api_key)
+            print(f"  Seviye 1 sonuçsuz. [Seviye 2] Son {TIER2_DAYS} gün, {TIER2_MIN_VIEWS:,}+ izlenme aranıyor...")
+            trend_data = fetch_tier(keywords, api_key, TIER2_DAYS, TIER2_MIN_VIEWS, "tier2_yearly_high_performer")
+        if not trend_data:
+            print(f"  Seviye 2 sonuçsuz. [Seviye 3 - son çare] Son {TIER3_DAYS} gün, eşiksiz aranıyor...")
+            trend_data = fetch_tier(keywords, api_key, TIER3_DAYS, TIER3_MIN_VIEWS, "tier3_relaxed")
+    else:
+        print(f"Konu: \"{topic_hint or '(belirtilmemiş)'}\" - kademeli trend araması başlıyor...")
+        trend_data = fetch_trending_for_topic(topic_hint, api_key, client)
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(trend_data, f, ensure_ascii=False, indent=2)
 
     print(f"\nTrend analizi tamamlandı -> {args.out} ({len(trend_data)} video)")
+    tier_labels = {
+        "tier1_quarter_high_performer": "[SON 90 GÜN, 250K+]",
+        "tier2_yearly_high_performer": "[SON 1 YIL, 2M+]",
+        "tier3_relaxed": "[SON 1 YIL, EŞİKSİZ]",
+    }
     for v in trend_data[:8]:
-        tag = "[SON 30 GÜN PATLADI]" if v["source"] == "monthly_high_performer" else "[GENEL]"
+        tag = tier_labels.get(v["source"], "[BİLİNMEYEN]")
         print(f"  {tag} {v['views']:>10,} izlenme - {v['title']}")
 
 
