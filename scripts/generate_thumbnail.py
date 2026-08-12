@@ -1,81 +1,59 @@
 """
 Seçilen tek başlık için TEK bir kapak (thumbnail) üretir ve üzerine
-metin + kırmızı vurgu halkası bindirir (PIL).
+metin + (opsiyonel) kırmızı vurgu halkası bindirir (PIL).
 
 MODEL MİMARİSİ (tamamen Gemini, tek sistem):
 - Stil analizi (trend kapaklarından patern çıkarma): gemini-3.6-flash (vision)
 - Kapak konsepti üretimi (visual_prompt/hook_text/emphasis_target): gemini-3.6-flash
 - Vurgu noktası koordinat bulma (üretilen görselde): gemini-3.6-flash (vision)
-- Arka plan görsel üretimi: gemini-2.5-flash-image ("Nano Banana" - ücretsiz
-  katmanda erişilebilir model; gemini-3-pro-image/"Nano Banana Pro"
-  denendi ama ücretsiz katman kotası SIFIR, faturalandırma gerektiriyor)
-Sahne görselleri (generate_scenes.py) hâlâ Wiro kullanıyor - sadece
-kapak üretimi Gemini'ye taşındı.
+- Metin yerleşim bölgesi bulma (üretilen görselde): gemini-3.6-flash (vision)
+- Arka plan görsel üretimi: gemini-2.5-flash-image ("Nano Banana")
 
-ÖNEMLİ (kapak-başlık ilişkisi):
-Kapak, başlığın bir tekrarı DEĞİLDİR. Kapak, izleyiciye ham bir
-SORU/GİZEM sunar (görsel + 2-3 kelimelik kışkırtıcı metin); başlık bu
-sorunun bağlamını/gelişmesini verir ama cevabı vermez; videonun kendisi
-asıl cevabı verir. Bu yüzden kapak için Gemini'den başlıktan bağımsız,
-daha ham ve daha az bilgi veren bir "hook" konsepti üretiliyor.
+--- BUGÜNKÜ BÜYÜK REVİZYON (gerçek VidIQ verisine dayanarak) ---
+Kullanıcı elle ürettiği bir kapağı (geniş, atmosferik, sinematik bir
+atölye sahnesi + kutu olmadan büyük, gölgeli başlık metni) pipeline'ın
+ürettiği eski formülle (yakın çekim nesne + kırmızı parlayan çekirdek +
+siyah kutu içinde kısa "NEVER EXPLAINED" metni) karşılaştırdı. VidIQ
+kapak puanları: manuel kapak 70/100, eski pipeline formülü 37/100 -
+neredeyse İKİ KAT fark. Bu veriye dayanarak sistem şu şekilde revize
+edildi:
 
-TREND REFERANSI (--trends verilirse): trend_analysis.py'nin çektiği
-nişte GERÇEKTEN tutan videoların BAŞLIKLARI (metin kalıpları) VE
-KAPAK GÖRSELLERİ (gerçek, indirilip Gemini'ye vision ile gösterilen
-JPEG'ler) bağlam olarak kullanılıyor. Amaç birebir kopyalamak değil,
-"bu nişte şu enerji/ton/stil işe yarıyor" sinyalini kapak konseptine
-yansıtmak - hem başlık hem görsel için, hâlâ tamamen orijinal bir
-görsel/metin üretiliyor. Kapak görselleri sadece SOYUT PATERN (kontrast,
-renk, kompozisyon) çıkarmak için kullanılır, hiçbir spesifik nesne/
-logo/kişi kopyalanmaz (bkz. analyze_thumbnail_patterns).
+1. GÖRSEL STİL: "bright/vivid/bright reds" zorunluluğu kaldırıldı.
+   Artık GENİŞ, ATMOSFERİK, sinematik bir SAHNE tercih ediliyor (tozlu
+   ışık huzmeleri, derinlik, bağlamsal öğeler) - eskiden zorunlu olan
+   "tek nesneye yakın çekim" formülü gevşetildi, hâlâ net bir odak
+   noktası olmalı ama sahne artık "boş/soyut" değil, hikaye anlatan
+   bir ortam olabilir.
+2. METİN KUTUSU KALDIRILDI: Eskiden metnin arkasında dolgun siyah bir
+   dikdörtgen vardı (kaybeden kapakta böyleydi). Artık SADECE siyah
+   kontur/gölge ile okunabilirlik sağlanıyor, kutu yok (kazanan
+   kapaktaki gibi) - görsel çok daha temiz duruyor.
+3. METİN UZUNLUĞU GEVŞETİLDİ: Eskiden KESİN 2-3 kelime şartı vardı.
+   Artık 2-6 kelime arası, 1-3 satır, başlığın özünü yansıtan daha
+   bilgilendirici bir metin serbest - kazanan kapak neredeyse başlığın
+   kendisini kullanmıştı ve çok daha iyi puan aldı.
+4. KIRMIZI VURGU HALKASI OPSİYONEL HALE GETİRİLDİ: Konsept üretimi artık
+   "use_emphasis_ring" alanı ile halkanın bu sahnede GERÇEKTEN faydalı
+   olup olmadığına karar veriyor - geniş atmosferik sahnelerde genelde
+   gereksiz/dikkat dağıtıcı olduğu için varsayılan eğilim artık HAYIR.
 
-KENDİ GEÇMİŞ KAPAKLARINDAN ÇEŞİTLİLİK KONTROLÜ (bugün eklendi):
-trend_analysis.py'nin dış trend kapaklarını referans alması gibi,
-generate_thumbnail.py artık KENDİ kanalının son 3 videosunun gerçek
-kapaklarını da (YouTube OAuth ile) çekip Gemini'ye gösteriyor - ama
-"bu stili taklit et" için değil, "bu spesifik motifleri (ör. çatlak
-nesne + kırmızı parlayan çekirdek) TEKRARLAMA" diye. Bu, art arda
-neredeyse birebir aynı görünen kapakların üretilmesini önlemek için
-eklendi. Bkz. get_own_recent_thumbnails, analyze_own_thumbnail_diversity.
+DİNAMİK METİN YERLEŞİMİ: Üretilen görsel Gemini'ye (vision) gösterilip
+görseldeki EN BOŞ/EN UYGUN köşe (üst-sol, üst-sağ, alt-sol, alt-sağ)
+sorduruluyor - ana sahne/nesneyle çakışmayan bir bölge seçilir. Tespit
+başarısız olursa dört köşeden rastgele biri seçilir.
 
-BUGÜNKÜ KRİTİK BUG DÜZELTMESİ (JSON parse): generate_thumbnail_concept
-ve locate_emphasis_point, Gemini'nin yanıtını saf json.loads() ile
-parse ediyordu - Gemini yanıtın başına/sonuna açıklama metni eklediğinde
-bu SESSIZCE ÇÖKÜYORDU ve generate_thumbnail_concept HER SEFERİNDE aynı
-sabit yedek değere ("a mysterious object under dramatic lighting,
-close-up on one strange unexplained detail" + "NEVER EXPLAINED")
-düşüyordu. Bu, art arda üretilen kapakların neden hep aynı klişeye
-(çatlak nesne + kırmızı çekirdek) yakınsadığının ASIL SEBEBIYDI. Artık
-extract_json_object() ile JSON gövdesi metin içinden güvenilir şekilde
-çıkarılıyor, bu fallback artık neredeyse hiç tetiklenmeyecek.
+GÜÇLENDİRİLMİŞ RAKİP/VİRAL STİL ANALİZİ: analyze_thumbnail_patterns,
+yüz/avatar içermeyen rakip kapaklardan stil paterni + metin konumu
+eğilimi çıkarır.
 
-NOT: YouTube'un native A/B testi (Test & Compare) API'den erişilemiyor
-ve YPP üyeliği gerektiriyor, bu yüzden sistem artık çoklu kapak yerine
-tek, en güçlü kapağı üretiyor (bkz. generate_titles.py).
+KENDİ GEÇMİŞ KAPAKLARINDAN ÇEŞİTLİLİK KONTROLÜ: KENDİ kanalının son 3
+videosunun gerçek kapaklarını (YouTube OAuth ile) çekip Gemini'ye
+gösteriyor - "bu spesifik motifleri TEKRARLAMA" diye.
 
-GÖRSEL DİL (NESNE-ODAKLI FORMAT - avatar tamamen kaldırıldı):
-Kanıtlanmış iki bağımsız sinyal (VidIQ kapak puanlaması + YouTube'un
-kendi AI kapak önerisi) bu nişte avatar/yüz kullanmayan, tek bir
-dramatik nesneye/detaya kilitlenen kapakların çok daha güçlü
-performans gösterdiğini gösterdi. Bu yüzden:
-- Kapağın TEK kahramanı, konuyla ilgili somut bir NESNE/DETAY (madeni
-  para, eski telefon, oyun kartuşu vb.) - yakın çekim, dramatik ışık,
-  net ve tek bakışta okunur.
-- KIRMIZI VURGU ELEMENTİ (halka veya ok) nesnenin/detayın en kritik
-  noktasını işaret eder - izleyicinin bakışını anında konuya kilitler.
-- Metin sol altta, kenardan uzakta, koyu/yüksek kontrast bir kutu
-  üzerinde, EN FAZLA 3 KELİME - CTR artırmak için daha punch'lı. Sadece
-  beyaz/sarı (kırmızı BİLEREK metinde kullanılmıyor - vurgu halkasıyla
-  çakışmasın diye, bkz. TEXT_COLOR_PALETTE).
-- Arka plan hafif bulanık/derinlik hissi veren ikincil bağlam öğeleri
-  içerebilir (ör. bulanık bir atari makinesi, oyun kutuları) ama asıl
-  netlik/odak her zaman ön plandaki nesnede.
-- Görsel içinde HİÇBİR yazı/tabela/el yazısı/okunabilir metin OLMAMALI
-  (metni biz PIL ile kendimiz ekliyoruz, AI'nin sahne içine kendiliğinden
-  tabela/yazı eklemesi hem kontrolsüz hem bizim eklediğimiz hook_text
-  ile çakışabiliyor - bkz. BRAND_SAFETY_INSTRUCTION).
-- Dört kenara kanal logosunun renginde ince bir çerçeve (marka
-  tutarlılığı için).
+JSON PARSE SAĞLAMLIĞI: extract_json_object() ile JSON gövdesi metin
+içinden güvenilir şekilde çıkarılıyor - eskiden saf json.loads() Gemini
+yanıtın başına/sonuna açıklama eklediğinde sessizce çöküyor ve HER
+SEFERİNDE aynı sabit yedek değere düşülüyordu.
 
 Kullanım:
     python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
@@ -84,8 +62,7 @@ Kullanım:
 Ortam değişkenleri:
     GEMINI_API_KEY (zorunlu)
     YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN (opsiyonel - kendi
-      geçmiş kapaklarından çeşitlilik kontrolü için; verilmezse bu adım
-      sessizce atlanır, kapak üretimi normal devam eder)
+      geçmiş kapaklarından çeşitlilik kontrolü için)
 """
 import argparse
 import json
@@ -99,29 +76,33 @@ from google import genai
 from google.genai import types
 from PIL import Image, ImageDraw, ImageFont
 
-MODEL_TEXT_VISION = "gemini-3.6-flash"  # konsept üretimi, stil analizi, koordinat bulma
-MODEL_IMAGE = "gemini-2.5-flash-image"  # "Nano Banana" - kapak arka planı üretimi
-# NOT: gemini-3-pro-image (Nano Banana Pro) denendi ama ücretsiz
-# katmanda kotası SIFIR (limit: 0, faturalandırma/billing gerektiriyor).
-# gemini-2.5-flash-image ücretsiz katmanda erişilebilir olduğu için
-# buna düşüldü. İleride faturalandırma açılırsa Pro'ya terfi edilebilir.
+MODEL_TEXT_VISION = "gemini-3.6-flash"
+MODEL_IMAGE = "gemini-2.5-flash-image"
 
 MAX_RETRIES = 4
-RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
+RETRY_BASE_DELAY = 5
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
-MAX_OWN_THUMBNAILS = 3  # çeşitlilik kontrolü için en fazla kaç geçmiş kapak
+MAX_OWN_THUMBNAILS = 3
 
+# ESKİ (kaybeden, VidIQ 37/100): "bright, vivid... bright reds..."
+# YENİ (kazanan yaklaşımına göre revize, geniş atmosferik sahne):
 THUMBNAIL_STYLE = (
-    "bright, vivid, eye-catching mystery-documentary YouTube thumbnail "
-    "aesthetic, BOLD and CLEAR (not dark or moody), high saturation, "
-    "punchy contrast, strong single subject that fills a significant "
-    "portion of the frame and is INSTANTLY recognizable/readable at a "
-    "glance even before reading any text, cinematic but vivid color "
-    "grading (rich blues, warm oranges, bright reds - avoid muddy or "
-    "underlit scenes), well-lit, sharp and pops even at small size, "
-    "tech/gaming themed, no existing text in the image, 16:9"
+    "cinematic, atmospheric, documentary-style YouTube thumbnail scene, "
+    "wide environmental composition with real depth (not just a flat "
+    "close-up) - think a dusty archive, a cluttered workshop desk, an "
+    "old server room, or a similar richly-detailed physical space "
+    "relevant to the topic. Moody but CLEAR directional lighting (a "
+    "single strong light source such as a lamp, a beam of light "
+    "through dust particles, or a glowing screen) that draws the eye "
+    "to one clear focal point without the whole image looking dark or "
+    "flat. Rich, slightly desaturated cinematic color grading (deep "
+    "blues, warm ambers, muted teals - avoid oversaturated neon colors "
+    "and avoid making everything glow bright red). Sharp focus, "
+    "believable physical textures (wood grain, dust, worn metal, old "
+    "electronics), tech/gaming/history themed, no existing text in the "
+    "image, 16:9"
 )
 
 BRAND_SAFETY_INSTRUCTION = (
@@ -149,27 +130,38 @@ EMPHASIS_COLOR = (230, 30, 30)
 MAX_TREND_TITLES = 8
 MAX_TREND_THUMBNAILS = 3
 
+TEXT_ZONES = ["top_left", "top_right", "bottom_left", "bottom_right"]
+
 FALLBACK_CONCEPTS = [
     {
-        "visual_prompt": "a weathered object resting on a wooden desk under "
-                          "warm desk-lamp light, long dramatic shadow, "
-                          "shallow depth of field",
-        "hook_text": "NEVER EXPLAINED",
+        "visual_prompt": "a cluttered wooden workshop desk at night, a "
+                          "single warm desk lamp casting a dramatic beam "
+                          "of light across scattered old electronics and "
+                          "tools, dust particles visible in the light, "
+                          "deep shadows in the background, cinematic depth",
+        "hook_text": "THE TRUTH BEHIND IT",
+        "emphasis_target": "",
+        "use_emphasis_ring": False,
+    },
+    {
+        "visual_prompt": "a dimly lit archive room with old shelves full "
+                          "of technology and files, a single shaft of "
+                          "cool blue light cutting through the dust, one "
+                          "object left open on a table in the foreground, "
+                          "moody and mysterious depth",
+        "hook_text": "WHAT THEY DIDN'T SAY",
+        "emphasis_target": "",
+        "use_emphasis_ring": False,
+    },
+    {
+        "visual_prompt": "a close but contextual shot of a worn object on "
+                          "an old desk, warm golden-hour light streaming "
+                          "in from one side, gritty documentary texture, "
+                          "background softly out of focus with hints of "
+                          "the wider room",
+        "hook_text": "THE HIDDEN COST",
         "emphasis_target": "the most worn/damaged part of the object",
-    },
-    {
-        "visual_prompt": "a single object frozen mid-motion against a stark "
-                          "dark background, cool blue rim lighting, high "
-                          "contrast silhouette",
-        "hook_text": "THE REAL REASON",
-        "emphasis_target": "the sharpest edge or corner of the object",
-    },
-    {
-        "visual_prompt": "an object photographed from a low dramatic angle, "
-                          "dusty golden-hour light streaming across it, "
-                          "gritty documentary texture",
-        "hook_text": "HIDDEN COST",
-        "emphasis_target": "the center of the object where light and shadow meet",
+        "use_emphasis_ring": True,
     },
 ]
 
@@ -237,14 +229,18 @@ def analyze_thumbnail_patterns(client, thumbnail_urls: list):
 
     prompt_text = (
         "Bu görseller, bu nişte GERÇEKTEN yüksek izlenme almış YouTube "
-        "kapaklarıdır. SADECE soyut, genel görsel PATERNLERİ çıkar: "
-        "kompozisyon (konu nerede duruyor, kaç öğe var), kontrast "
-        "seviyesi, renk paleti eğilimi, ışıklandırma tarzı, metin "
-        "kullanımı var mı/nasıl. KESİNLİKLE şunları YAPMA: hiçbir "
-        "spesifik nesneyi, markayı, logoyu, kişiyi ya da sahneyi tarif "
-        "etme/kopyalama - amaç bu görselleri ya da içeriklerini "
-        "yeniden üretmek DEĞİL, sadece hangi GENEL stilin bu nişte işe "
-        "yaradığını anlamak.\n\n"
+        "kapaklarıdır (rakip kanallar dahil). Bu kapaklar arasında "
+        "ÖZELLİKLE yüz/avatar İÇERMEYEN örnekleri baz alarak SADECE "
+        "soyut, genel görsel PATERNLERİ çıkar: kompozisyon (geniş sahne "
+        "mi yoksa yakın çekim mi, kaç öğe var, ne kadar atmosferik/"
+        "sinematik), kontrast seviyesi, renk paleti eğilimi, "
+        "ışıklandırma tarzı, VE metin varsa GENELDE görselin hangi "
+        "bölgesinde durduğu ve NE KADAR UZUN/kısa olduğu, kutu içinde "
+        "mi yoksa doğrudan görsel üzerine mi bindirildiği. KESİNLİKLE "
+        "şunları YAPMA: hiçbir spesifik nesneyi, markayı, logoyu, "
+        "kişiyi ya da sahneyi tarif etme/kopyalama - amaç bu görselleri "
+        "ya da içeriklerini yeniden üretmek DEĞİL, sadece hangi GENEL "
+        "stilin bu nişte (yüzsüz formatta) işe yaradığını anlamak.\n\n"
         "Çıktı SADECE 2-3 cümlelik bir stil özeti, düz metin (JSON değil)."
     )
     try:
@@ -325,14 +321,11 @@ def analyze_own_thumbnail_diversity(client, own_thumbnail_urls: list):
         "kapaklarıdır (kronolojik sırada, en yeni dahil). Görevin: bu "
         "kapaklar arasında TEKRAR EDEN spesifik görsel motifleri tespit "
         "etmek (ör. 'çatlak/kırık bir nesne', 'nesnenin içinden parlayan "
-        "kırmızı/turuncu ışık', 'aynı kamera açısı', 'aynı renk paleti'). "
-        "Amaç, BİR SONRAKİ kapağın bu motifleri TEKRARLAMAMASI için bir "
-        "'kaçınılacaklar' listesi çıkarmak - kanalın genel kalite/ton "
-        "tutarlılığından BAHSETME, sadece spesifik, somut, tekrar eden "
-        "görsel öğeleri listele. Eğer belirgin bir tekrar yoksa, boş "
-        "liste döndür.\n\n"
-        "Çıktı SADECE JSON dizi, kısa maddeler halinde: "
-        '["motif 1", "motif 2"] ya da tekrar yoksa []'
+        "kırmızı/turuncu ışık', 'aynı kamera açısı', 'aynı renk paleti', "
+        "'metin arkasında siyah kutu'). Amaç, BİR SONRAKİ kapağın bu "
+        "motifleri TEKRARLAMAMASI için bir 'kaçınılacaklar' listesi "
+        "çıkarmak. Eğer belirgin bir tekrar yoksa, boş liste döndür.\n\n"
+        "Çıktı SADECE JSON dizi: [\"motif 1\", \"motif 2\"] ya da tekrar yoksa []"
     )
     try:
         raw = call_gemini(client, image_parts + [prompt_text], max_tokens=200)
@@ -379,65 +372,72 @@ def generate_thumbnail_concept(client, title: str, script_excerpt: str,
     style_block = ""
     if style_summary:
         style_block = (
-            "\n\nBU NİŞTE GERÇEKTEN YÜKSEK PERFORMANS GÖSTERMİŞ KAPAKLARIN "
-            "GENEL STİL ÖZETİ (gerçek görsellerden çıkarılmış, sadece "
-            "PATERN - hiçbir spesifik görseli kopyalama, sadece bu genel "
-            "stil eğilimini kendi özgün visual_prompt'una yansıt):\n"
+            "\n\nBU NİŞTE (RAKİP KANALLAR DAHİL) GERÇEKTEN YÜKSEK "
+            "PERFORMANS GÖSTERMİŞ KAPAKLARIN GENEL STİL ÖZETİ:\n"
             + style_summary
         )
 
     avoid_block = ""
     if avoid_motifs:
         avoid_block = (
-            "\n\nÇEŞİTLİLİK ZORUNLULUĞU - BU MOTİFLERİ KESİNLİKLE TEKRARLAMA: "
-            "Bu kanalın SON kapaklarında şu spesifik görsel öğeler tekrar "
-            "tekrar kullanılmış, bu yüzden visual_prompt'un bunlardan "
-            "GERÇEKTEN FARKLI olmalı (farklı nesne türü, farklı ışık "
-            "kaynağı/rengi, farklı kompozyon/açı):\n"
+            "\n\nÇEŞİTLİLİK ZORUNLULUĞU - BU MOTİFLERİ KESİNLİKLE TEKRARLAMA:\n"
             + "\n".join(f"- KAÇIN: {m}" for m in avoid_motifs)
         )
 
     prompt = f"""Bir YouTube kapak görseli (thumbnail) konsepti üret.
 
-KESİN KURAL: Bu kapak, aşağıdaki başlıkla AYNI bilgiyi VERMEMELİ.
-Başlık zaten konunun gelişmesini/bağlamını açıklıyor. Kapağın görevi
-SADECE ham bir soru/gizem/çelişki sunmak - izleyici "bu ne, ne oluyor"
-desin, başlıktaki bilgiyi henüz bilmesin.
+ÖNEMLİ BAĞLAM - GERÇEK PERFORMANS VERİSİ: Bu kanalda yakın zamanda
+yapılan bir A/B karşılaştırmasında, GENİŞ/ATMOSFERİK bir SAHNE (tozlu
+bir atölye masası, arşiv odası gibi, derinlik ve bağlam içeren) +
+KUTUSUZ, başlığa yakın uzunlukta (birkaç kelime, 1-3 satır) metin
+içeren bir kapak, VidIQ kalite puanlamasında YAKIN ÇEKİM tek nesne +
+kırmızı parlayan ışık + kutu içinde 2 kelimelik jenerik metin içeren
+eski formülden NEREDEYSE İKİ KAT daha yüksek puan aldı (70 vs 37).
+Bu yüzden BUGÜNDEN İTİBAREN geniş/atmosferik sahne ve daha
+bilgilendirici metin yaklaşımı TERCİH EDİLMELİ.
 
-BAŞLIK (kapakta bunu tekrar etme, bundan bağımsız düşün): {title}
+KESİN KURAL: Bu kapak, aşağıdaki başlıkla BİREBİR AYNI CÜMLE olmamalı
+ama başlığın MERAK UYANDIRAN özünü/sorusunu yansıtabilir - tamamen
+alakasız, aşırı soyut bir "hook" kelimesi ARAMA, doğrudan konuya
+değinen ama tam cevabı vermeyen bir ifade tercih et.
 
-SCRIPT'TEN KISA ALINTI (konunun özünü anlamak için, kapak metnine
-doğrudan kopyalama): {script_excerpt[:800]}
+BAŞLIK: {title}
+
+SCRIPT'TEN KISA ALINTI: {script_excerpt[:800]}
 {trend_block}
 {style_block}
 {avoid_block}
 
 Üret:
-1. "visual_prompt": İngilizce, somut, TEK BİR NESNEYE/DETAYA odaklanan
-   bir SAHNE tarifi (ör. eski bir telefon, bir oyun kartuşu, bir madeni
-   para, garip bir mekanizma). Yakın çekim, dramatik ışık, net ve tek
-   bakışta ne olduğu anlaşılır olsun. Arka planda hafif bulanık
-   ikincil/bağlamsal öğeler olabilir (ör. bulanık bir atari makinesi,
-   oyun kutuları) ama net odak HER ZAMAN ön plandaki tek nesnede olsun.
-   Kişi/karakter/yüz KULLANMA - bu formatta kapak tamamen nesne
-   odaklı, insan figürü YOK. Sahnede HİÇBİR yazı/tabela/etiket OLMASIN.
-2. "hook_text": İngilizce, TÜM BÜYÜK HARF, EN FAZLA 3 KELİME (2 kelime
-   daha da güçlü olur), soru işareti kullanmadan, ŞOK EDİCİ/İDDİALI bir
-   ifade - "interesting" değil "impossible to ignore" hissi versin
-   (ör. "NEVER EXPLAINED", "THE REAL REASON", "HIDDEN COST"). Kelimeler
-   ne kadar az, punch o kadar güçlü. Başlıktaki kelimeleri birebir
-   tekrarlama.
-3. "emphasis_target": İngilizce, TEK CÜMLE, visual_prompt'taki nesnenin
-   TAM OLARAK HANGİ NOKTASININ/BÖLGESİNİN kırmızı bir halka veya okla
-   vurgulanacağını tarif et (ör. "the small scratch mark near the
-   center of the coin", "the rotary dial of the phone"). Bu, kırmızı
-   vurgu elementinin nereye çizileceğini belirleyecek.
+1. "visual_prompt": İngilizce, GENİŞ VE ATMOSFERİK bir SAHNE tarifi -
+   sadece tek bir nesneye aşırı yakın çekim DEĞİL, gerçek bir mekan/
+   bağlam hissi olan bir sahne (ör. tozlu bir atölye masası, karanlık
+   bir arşiv odası, eski bir sunucu odası). Net bir ışık kaynağı ve
+   net bir odak noktası olsun ama sahne "boş" durmasın, derinlik ve
+   doku hissi versin. Kişi/karakter/yüz KULLANMA. Sahnede HİÇBİR yazı/
+   tabela/etiket OLMASIN.
+2. "hook_text": İngilizce, TÜM BÜYÜK HARF, 2 İLA 6 KELİME ARASI (kesin
+   2-3 kelime şartı YOK artık), 1-3 satıra bölünebilir, başlığın
+   merakını yansıtan, iddialı ama tamamen soyut olmayan bir ifade.
+   HER SEFERİNDE FARKLI VE ÖZGÜN - "NEVER EXPLAINED" gibi tek bir
+   kalıba saplanma.
+3. "use_emphasis_ring": true/false - bu SAHNE için kırmızı bir vurgu
+   halkası GERÇEKTEN faydalı mı (net, tek bir küçük detayı işaret
+   etmek gerekiyorsa true) yoksa geniş atmosferik sahnede gereksiz/
+   dikkat dağıtıcı mı olur (false)? ŞÜPHEDEYSEN false seç - veri, sade
+   sahnelerin daha iyi performans gösterdiğini gösteriyor.
+4. "emphasis_target": SADECE use_emphasis_ring true ise doldur -
+   İngilizce, TEK CÜMLE, hangi noktanın vurgulanacağını tarif et. false
+   ise boş string bırak.
 
-Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "emphasis_target": "..."}}"""
+Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "use_emphasis_ring": true veya false, "emphasis_target": "..."}}"""
 
     raw = call_gemini(client, prompt)
     try:
-        return extract_json_object(raw)
+        concept = extract_json_object(raw)
+        concept.setdefault("use_emphasis_ring", False)
+        concept.setdefault("emphasis_target", "")
+        return concept
     except json.JSONDecodeError:
         print(f"  UYARI: kapak konsepti JSON parse edilemedi, çeşitli "
               f"yedeklerden biri kullanılıyor. Ham yanıt: {raw[:200]!r}")
@@ -478,8 +478,8 @@ def generate_background(client, prompt: str, out_path: str):
         print(f"  UYARI: Gemini kapak üretimi başarısız ({type(e).__name__}), "
               f"jenerik tarifle yeniden deniyorum...")
         fallback_prompt = (
-            f"{THUMBNAIL_STYLE}. Subject: an abstract, dramatic "
-            "technology-themed scene, glowing shapes, no people, no text."
+            f"{THUMBNAIL_STYLE}. Subject: an abstract, atmospheric "
+            "technology-themed scene, soft directional light, no people, no text."
             f"{BRAND_SAFETY_INSTRUCTION}"
         )
         image_bytes = _call(fallback_prompt)
@@ -533,9 +533,46 @@ def locate_emphasis_point(client, image_path: str, emphasis_target: str,
                   f"({type(e).__name__}, deneme {attempt + 1}/2)")
 
     print("  UYARI: 2 denemede de vurgu noktası bulunamadı, "
-          "bu kapakta halka OLMADAN devam ediliyor (yanlış yere "
-          "halka çizmek yerine)")
+          "bu kapakta halka OLMADAN devam ediliyor")
     return None
+
+
+def locate_text_zone(client, image_path: str, img_w: int, img_h: int,
+                      emphasis_point=None) -> str:
+    emphasis_note = ""
+    if emphasis_point:
+        ex, ey, _ = emphasis_point
+        emphasis_note = (
+            f" Görselde ({ex}, {ey}) civarında kırmızı bir vurgu halkası "
+            f"var, metin bölgesi bu noktayla ÇAKIŞMAMALI."
+        )
+    try:
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+
+        prompt = (
+            f"Bu görsele bak. Görsel {img_w}x{img_h} piksel boyutunda. "
+            f"Ana sahnenin/konunun EN AZ bulunduğu, en 'boş'/sade kalan "
+            f"köşeyi bul - bir YouTube kapağına birkaç kelimelik bir "
+            f"başlık metni eklenecek, bu metin ana görsel öğelerin "
+            f"üzerine binmemeli."
+            f"{emphasis_note}\n\n"
+            f"Çıktı SADECE JSON: "
+            f'{{"zone": "top_left" | "top_right" | "bottom_left" | "bottom_right"}}'
+        )
+        raw = call_gemini(client, [image_part, prompt], max_tokens=80)
+        result = extract_json_object(raw)
+        zone = result.get("zone", "")
+        if zone in TEXT_ZONES:
+            return zone
+    except Exception as e:
+        print(f"  UYARI: metin yerleşim bölgesi tespiti başarısız "
+              f"({type(e).__name__})")
+
+    fallback_zone = random.choice(TEXT_ZONES)
+    print(f"  Metin bölgesi tespit edilemedi, rastgele seçildi: {fallback_zone}")
+    return fallback_zone
 
 
 def draw_emphasis_ring(img: Image.Image, center_x: int, center_y: int, radius: int):
@@ -550,26 +587,36 @@ def draw_emphasis_ring(img: Image.Image, center_x: int, center_y: int, radius: i
     return img
 
 
-def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, out_path: str):
+def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str,
+                  use_emphasis_ring: bool, out_path: str):
     img = Image.open(image_path).convert("RGB")
 
-    emphasis_point = locate_emphasis_point(client, image_path, emphasis_target,
-                                            img.width, img.height)
-    if emphasis_point:
-        ex, ey, eradius = emphasis_point
-        img = draw_emphasis_ring(img, ex, ey, eradius)
+    # Vurgu halkası artık OPSİYONEL - veri, sade/atmosferik sahnelerde
+    # halkanın çoğunlukla gereksiz/dikkat dağıtıcı olduğunu gösterdi.
+    emphasis_point = None
+    if use_emphasis_ring and emphasis_target:
+        emphasis_point = locate_emphasis_point(client, image_path, emphasis_target,
+                                                img.width, img.height)
+        if emphasis_point:
+            ex, ey, eradius = emphasis_point
+            img = draw_emphasis_ring(img, ex, ey, eradius)
+
+    zone = locate_text_zone(client, image_path, img.width, img.height, emphasis_point)
 
     draw = ImageDraw.Draw(img, "RGBA")
 
-    x_margin = int(img.width * 0.04)
-    max_text_width = int(img.width * 0.6)
-    max_text_height = int(img.height * 0.38)
-    bottom_margin = int(img.height * 0.14)
+    edge_margin = int(img.width * 0.045)
+    top_margin = int(img.height * 0.06)
+    bottom_margin = int(img.height * 0.08)
+    # Kutu kaldırıldığı için metin artık daha geniş bir alanı
+    # kaplayabilir (kazanan örnekteki gibi çok satırlı, büyük başlık).
+    max_text_width = int(img.width * 0.62)
+    max_text_height = int(img.height * 0.55)
 
     short_text = hook_text.strip().upper()
 
-    font_size = int(img.height * 0.16)
-    min_font_size = int(img.height * 0.06)
+    font_size = int(img.height * 0.12)
+    min_font_size = int(img.height * 0.05)
 
     while font_size > min_font_size:
         font = ImageFont.truetype(FONT_PATH, font_size)
@@ -578,7 +625,7 @@ def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, 
         wrapped = textwrap.fill(short_text, width=wrap_width,
                                  break_long_words=False, break_on_hyphens=False)
 
-        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
+        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=12)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
 
@@ -589,23 +636,33 @@ def overlay_text(image_path: str, hook_text: str, client, emphasis_target: str, 
         font = ImageFont.truetype(FONT_PATH, min_font_size)
         wrapped = textwrap.fill(short_text, width=10,
                                  break_long_words=False, break_on_hyphens=False)
-        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10)
+        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=12)
+        text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
 
-    x = x_margin
-    y = img.height - bottom_margin - text_h
-    pad = 16
-    draw.rectangle(
-        [x - pad, y - pad, x + (bbox[2] - bbox[0]) + pad, y + text_h + pad],
-        fill=(0, 0, 0, 210),
-    )
+    if zone == "top_left":
+        x = edge_margin
+        y = top_margin
+    elif zone == "top_right":
+        x = img.width - edge_margin - text_w
+        y = top_margin
+    elif zone == "bottom_right":
+        x = img.width - edge_margin - text_w
+        y = img.height - bottom_margin - text_h
+    else:  # bottom_left
+        x = edge_margin
+        y = img.height - bottom_margin - text_h
 
-    for dx in (-3, -1, 0, 1, 3):
-        for dy in (-3, -1, 0, 1, 3):
-            draw.multiline_text((x + dx, y + dy), wrapped, font=font,
-                                 fill=(0, 0, 0, 255), spacing=10)
+    # KUTU KALDIRILDI (eski: draw.rectangle ile dolgun siyah dikdörtgen).
+    # Artık sadece kalın siyah kontur/gölge ile okunabilirlik sağlanıyor
+    # - kazanan manuel kapaktaki gibi, görsel çok daha temiz duruyor.
+    stroke_offsets = [(-4, -4), (-4, 0), (-4, 4), (0, -4), (0, 4),
+                      (4, -4), (4, 0), (4, 4), (-3, -3), (3, 3), (-3, 3), (3, -3)]
+    for dx, dy in stroke_offsets:
+        draw.multiline_text((x + dx, y + dy), wrapped, font=font,
+                             fill=(0, 0, 0, 255), spacing=12)
     text_color = random.choice(TEXT_COLOR_PALETTE)
-    draw.multiline_text((x, y), wrapped, font=font, fill=(*text_color, 255), spacing=10)
+    draw.multiline_text((x, y), wrapped, font=font, fill=(*text_color, 255), spacing=12)
 
     draw_border(draw, img.width, img.height)
 
@@ -619,7 +676,7 @@ def main():
     parser.add_argument("--script", required=False, default="script.md",
                          help="Kapak konsepti için bağlam olarak kullanılacak script dosyası")
     parser.add_argument("--trends", required=False, default="trend.json",
-                         help="trend_analysis.py çıktısı - nişte tutan başlıkları/kapakları referans almak için")
+                         help="trend_analysis.py çıktısı")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -645,7 +702,8 @@ def main():
     if trend_thumbnail_urls:
         style_summary = analyze_thumbnail_patterns(client, trend_thumbnail_urls)
         if style_summary:
-            print(f"  {len(trend_thumbnail_urls)} gerçek kapaktan stil paterni çıkarıldı: {style_summary[:100]}...")
+            print(f"  {len(trend_thumbnail_urls)} gerçek kapaktan (rakip/viral) "
+                  f"stil paterni çıkarıldı: {style_summary[:100]}...")
         else:
             print("  Kapak stil analizi başarısız/boş, referanssız devam ediliyor")
 
@@ -671,9 +729,12 @@ def main():
 
     final_path = os.path.join(args.out_dir, "thumbnail_1.png")
     overlay_text(raw_path, concept["hook_text"], client,
-                 concept.get("emphasis_target", ""), final_path)
+                 concept.get("emphasis_target", ""),
+                 concept.get("use_emphasis_ring", False),
+                 final_path)
     print(f"Kapak hazır -> {final_path}  "
-          f"(hook: \"{concept['hook_text']}\", vurgu: \"{concept.get('emphasis_target', '')}\", "
+          f"(hook: \"{concept['hook_text']}\", "
+          f"vurgu halkası: {concept.get('use_emphasis_ring', False)}, "
           f"başlık: \"{title}\")")
 
 
