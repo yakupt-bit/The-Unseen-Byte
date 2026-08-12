@@ -47,6 +47,20 @@ Etiketler (tags) kanalın anahtar kelime listesinden dolduruluyor
 Kullanım:
     python scripts/upload_youtube.py --video output/final.mp4 \
         --titles titles.json --thumbnail output/thumbnails/thumbnail_1.png
+
+--- DEĞİŞİKLİK GEÇMİŞİ (bugünkü düzeltmeler) ---
+1. extract_json_array(): Claude'un JSON öncesi/sonrası metin eklediği
+   durumlarda (JSONDecodeError'ın asıl sebebi) JSON dizisini güvenilir
+   şekilde çıkarır. generate_hashtags, find_fallback_sources,
+   generate_pinned_comment içinde kullanılıyor.
+2. Hata mesajlarına ham model çıktısı eklendi (bir dahaki sefere kör
+   kalınmasın diye).
+3. compute_chapter_timestamps: toplam süre artık son kelimenin "end"
+   değerinden hesaplanıyor ("start" yerine) - daha doğru video süresi.
+4. build_chapters_block: her erken-çıkış noktasına debug print eklendi,
+   artık TAM OLARAK hangi koşulun başarısız olduğu loglarda görünüyor.
+5. load_facts_sources ve script dosyası kontrolüne UYARI print'leri
+   eklendi (dosya bulunamadığında sessiz kalmıyor).
 """
 import argparse
 import json
@@ -96,6 +110,20 @@ TAGS = [
 ]
 
 
+def extract_json_array(raw: str):
+    """Modelin çıktısındaki JSON dizisini, öncesinde/sonrasında
+    açıklama metni olsa bile güvenilir şekilde çıkarır. Claude bazen
+    "İşte istediğiniz liste:\n[...]" gibi bir cümleyle başlıyor, saf
+    json.loads bu durumda JSONDecodeError fırlatıyordu - bu fonksiyon
+    o sorunu çözer."""
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start == -1 or end == -1 or end < start:
+        raise json.JSONDecodeError("JSON dizisi bulunamadı", cleaned, 0)
+    return json.loads(cleaned[start:end + 1])
+
+
 def generate_hashtags(client, title: str) -> list:
     """Başlığa göre videoya ÖZEL 5 hashtag üretir (sabit liste değil).
     Herhangi bir hata/parse sorununda FALLBACK_HASHTAGS'e düşer, upload
@@ -108,6 +136,7 @@ Başlık: "{title}"
 
 SADECE JSON dizi formatında yaz, başka hiçbir şey yazma:
 ["#Etiket1", "#Etiket2", "#Etiket3", "#Etiket4", "#Etiket5"]"""
+    raw = ""
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -115,26 +144,29 @@ SADECE JSON dizi formatında yaz, başka hiçbir şey yazma:
             messages=[{"role": "user", "content": prompt}],
         )
         raw = "".join(b.text for b in response.content if b.type == "text")
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        tags = json.loads(cleaned)
+        tags = extract_json_array(raw)
         if isinstance(tags, list) and len(tags) >= 3:
             return tags[:5]
     except Exception as e:
         print(f"  UYARI: hashtag üretimi başarısız ({type(e).__name__}), "
               f"sabit yedek hashtag'ler kullanılıyor")
+        if raw:
+            print(f"  Ham model çıktısı: {raw[:300]!r}")
     return FALLBACK_HASHTAGS
 
 
 def load_facts_sources(facts_path: str) -> list:
     """facts.json'daki her fact'in 'source' alanını, sırayı koruyarak
     ve tekrarları eleyerek çıkarır. Dosya yoksa/bozuksa boş liste
-    döner - pipeline asla kırılmaz."""
+    döner - pipeline asla kırılmaz (ama artık en azından bunu logluyor)."""
     if not os.path.exists(facts_path):
+        print(f"  UYARI: facts dosyası bulunamadı: {facts_path}")
         return []
     try:
         with open(facts_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"  UYARI: facts dosyası okunamadı/bozuk ({type(e).__name__}): {facts_path}")
         return []
 
     facts = data.get("facts", []) if isinstance(data, dict) else []
@@ -186,6 +218,7 @@ uydurma - bulamazsan boş liste döndür, bu kabul edilebilir bir sonuç.
 Çıktı SADECE JSON dizi (kaynak adı + yayıncı/site formatında, kısa):
 ["Kaynak 1 - Site/Yayıncı adı", "Kaynak 2 - Site/Yayıncı adı"]
 Hiç kaynak bulamazsan: []"""
+    raw = ""
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
@@ -194,12 +227,13 @@ Hiç kaynak bulamazsan: []"""
             messages=[{"role": "user", "content": prompt}],
         )
         raw = "".join(b.text for b in response.content if b.type == "text")
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        sources = json.loads(cleaned)
+        sources = extract_json_array(raw)
         if isinstance(sources, list):
             return [str(s).strip() for s in sources if str(s).strip()][:4]
     except Exception as e:
         print(f"  UYARI: yedek kaynak araması başarısız ({type(e).__name__})")
+        if raw:
+            print(f"  Ham model çıktısı: {raw[:300]!r}")
     return []
 
 
@@ -260,6 +294,7 @@ BÖLÜMLER:
 
 Çıktı SADECE JSON dizi, sırayla, tam olarak {len(sections)} eleman:
 ["Title 1", "Title 2", ...]"""
+    raw = ""
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -267,24 +302,29 @@ BÖLÜMLER:
             messages=[{"role": "user", "content": prompt}],
         )
         raw = "".join(b.text for b in response.content if b.type == "text")
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        titles = json.loads(cleaned)
+        titles = extract_json_array(raw)
         if isinstance(titles, list) and len(titles) == len(sections):
             return titles
+        print(f"  UYARI: bölüm başlığı sayısı uyuşmadı: beklenen={len(sections)}, "
+              f"gelen={len(titles) if isinstance(titles, list) else 'liste değil'}")
     except Exception as e:
         print(f"  UYARI: bölüm başlıkları üretilemedi ({type(e).__name__}), "
               f"chapters bloğu atlanacak")
+        if raw:
+            print(f"  Ham model çıktısı: {raw[:300]!r}")
     return None
 
 
 def load_alignment_words(alignment_path: str) -> list:
     if not os.path.exists(alignment_path):
+        print(f"  UYARI: alignment dosyası bulunamadı: {alignment_path}")
         return []
     try:
         with open(alignment_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"  UYARI: alignment dosyası okunamadı ({type(e).__name__}): {alignment_path}")
         return []
 
 
@@ -299,7 +339,13 @@ def format_chapter_timestamp(seconds: float) -> str:
 
 def compute_chapter_timestamps(sections: list, alignment_words: list):
     """Her bölümün başladığı zamanı, script'teki kelime konumunu sesin
-    toplam süresine ORANTILI olarak eşleyerek tahmin eder."""
+    toplam süresine ORANTILI olarak eşleyerek tahmin eder.
+
+    NOT: toplam süre artık son kelimenin "end" (bitiş) değerinden
+    hesaplanıyor. Önceden "start" (başlangıç) kullanılıyordu, bu da
+    videonun gerçek süresini olması gerekenden biraz kısa gösteriyor
+    ve son bölümlerin zaman aralığının MIN_CHAPTER_GAP_SECONDS altına
+    düşüp tüm chapters bloğunun sessizce iptal olmasına yol açabiliyordu."""
     if not alignment_words or not sections:
         return []
 
@@ -307,7 +353,8 @@ def compute_chapter_timestamps(sections: list, alignment_words: list):
     if total_words == 0:
         return []
 
-    total_duration = alignment_words[-1].get("start", 0)
+    last_word = alignment_words[-1]
+    total_duration = last_word.get("end", last_word.get("start", 0))
     if not total_duration or total_duration <= 0:
         return []
 
@@ -323,16 +370,26 @@ def compute_chapter_timestamps(sections: list, alignment_words: list):
 
 
 def build_chapters_block(sections: list, titles, timestamps: list) -> str:
-    """YouTube'un chapters kurallarını sağlamıyorsa boş string döner."""
+    """YouTube'un chapters kurallarını sağlamıyorsa boş string döner.
+    Her erken-çıkış noktasına debug print eklendi - artık loglarda
+    TAM OLARAK hangi koşulun başarısız olduğu görünüyor."""
     if not titles or len(titles) != len(sections) or len(timestamps) != len(sections):
+        print(f"  [chapters debug] sayı uyuşmazlığı: sections={len(sections)}, "
+              f"titles={len(titles) if titles else 0}, timestamps={len(timestamps)}")
         return ""
     if len(sections) < MIN_CHAPTERS:
+        print(f"  [chapters debug] bölüm sayısı yetersiz: {len(sections)} < {MIN_CHAPTERS}")
         return ""
     if timestamps[0] != 0.0:
+        print(f"  [chapters debug] ilk timestamp 0 değil: {timestamps[0]}")
         return ""
 
     for i in range(1, len(timestamps)):
-        if timestamps[i] - timestamps[i - 1] < MIN_CHAPTER_GAP_SECONDS:
+        gap = timestamps[i] - timestamps[i - 1]
+        if gap < MIN_CHAPTER_GAP_SECONDS:
+            print(f"  [chapters debug] gap yetersiz: bölüm {i} -> "
+                  f"{gap:.1f}s < {MIN_CHAPTER_GAP_SECONDS}s gerekli "
+                  f"(timestamps={[round(t, 1) for t in timestamps]})")
             return ""
 
     lines = [
@@ -389,6 +446,7 @@ tartışma/yanıt tetikleyeceği - klişe/genel sorular düşük puan alsın).
 Çıktı SADECE JSON dizi, 5 eleman:
 [{{"comment": "...", "score": 8}}, ...]"""
 
+    raw = ""
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
@@ -396,16 +454,20 @@ tartışma/yanıt tetikleyeceği - klişe/genel sorular düşük puan alsın).
             messages=[{"role": "user", "content": prompt}],
         )
         raw = "".join(b.text for b in response.content if b.type == "text")
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        candidates = json.loads(cleaned)
+        candidates = extract_json_array(raw)
         if not isinstance(candidates, list) or not candidates:
+            print(f"  UYARI: yorum adayları boş/geçersiz döndü")
             return None
 
         best = max(candidates, key=lambda c: c.get("score", 0))
+        print(f"  En yüksek puanlı yorum adayı: {best.get('score', 0)}/10 "
+              f"(eşik: {MIN_COMMENT_SCORE})")
         if best.get("score", 0) >= MIN_COMMENT_SCORE:
             return best.get("comment", "").strip()
     except Exception as e:
         print(f"  UYARI: yorum üretimi başarısız ({type(e).__name__})")
+        if raw:
+            print(f"  Ham model çıktısı: {raw[:300]!r}")
     return None
 
 
@@ -582,6 +644,10 @@ def main():
             print(f"Bölüm zaman damgaları (chapters) eklendi ({len(sections)} bölüm).")
         else:
             print("  UYARI: chapters bloğu için yeterli/uyumlu veri yok, atlanıyor.")
+    else:
+        print(f"  UYARI: script dosyası bulunamadı: {args.script} — "
+              f"chapters VE pinned comment tamamen atlanacak")
+        print(f"  Mevcut çalışma dizini içeriği: {os.listdir('.')}")
 
     sources = load_facts_sources(args.facts)
     if not sources and script_text:
