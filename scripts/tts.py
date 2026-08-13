@@ -50,11 +50,13 @@ RETRY_PER_CHUNK = 3
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20
 
 # --- Ses ayarları ---
-SPEED_FACTOR = 1.20
+SPEED_FACTOR = 1.13
 VOLUME_FACTOR = 1.15
 # Hafif stüdyo/oda yankısı: kısa gecikme + düşük decay = abartısız.
+# (Kullanıcı geri bildirimiyle 1.20->1.13 hız ve 35ms/0.25->25ms/0.20
+# yankı olarak ince ayar yapıldı - önceki deneme hafif fazla gelmişti.)
 # aecho=in_gain:out_gain:delay_ms:decay
-ECHO_FILTER = "aecho=0.6:0.5:35:0.25"
+ECHO_FILTER = "aecho=0.6:0.5:25:0.20"
 
 
 def clean_script(raw: str) -> str:
