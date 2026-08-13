@@ -12,6 +12,23 @@ koyarak birleştirir.
 Her iki türde de animasyon/geçiş stili art arda gelen klipler arasında
 TEKRARLANMAZ.
 
+--- BUGÜNKÜ EKLEME: İLK 30 SANİYEDE YOĞUN GÖRSEL TEMPOSU ---
+Rakip analizinde (Ömer/Akgün eğitimi) gözlemlenen ve kanıtlanmış bir
+teknik: izleyiciyi videoya "kilitlemek" için ilk 30 saniyede normalden
+ÇOK DAHA SIK sahne geçişi (5-6 görsel) kullanılıyor, sonrasında tempo
+normale dönüyor. Eskiden TÜM klipler eşit süreye bölünüyordu
+(clip_len = total_duration / n) - artık DEĞİL:
+  - İlk INTRO_SCENE_COUNT kadar sahne, INTRO_SECONDS'a sıkıştırılıyor
+    (kısa, hızlı klipler).
+  - Kalan sahneler, kalan süreye normal (daha uzun) klip süresiyle
+    dağıtılıyor.
+  - Bu, HİÇBİR YENİ GÖRSEL ÜRETMEDEN yapılıyor - generate_scenes.py'nin
+    ürettiği sahne sayısı aynı kalıyor, sadece HANGİ sahnenin ne kadar
+    süre ekranda kalacağı değişiyor. Maliyet artışı yok.
+  - xfade geçiş offsetleri artık DEĞİŞKEN klip sürelerine göre genel
+    bir formülle hesaplanıyor (bkz. chain_with_xfade) - eskiden sadece
+    eşit süreler için çalışan sabit formül vardı.
+
 Ekstra bindirmeler:
 - VURGU KARTI (sağ üst): çarpıcı bir sayı/istatistik geçtiğinde kısa
   süreliğine görünür.
@@ -47,6 +64,10 @@ FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 LOGO_PATH = "assets/branding/logo.png"
 SENTENCES_PER_SCENE = 2  # generate_scenes.py ile aynı olmalı
 MAX_SCENES = 90  # generate_scenes.py ile aynı olmalı
+
+# --- İlk 30 saniye yoğun tempo ayarları ---
+INTRO_SECONDS = 30  # bu süre içinde hızlı geçiş uygulanacak
+INTRO_SCENE_COUNT = 6  # ilk 30 saniyeye kaç sahne sıkıştırılsın (n yeterliyse)
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
@@ -134,6 +155,35 @@ def gather_scene_files(scenes_dir: str):
         return int(num_part)
 
     return sorted(files, key=scene_index)
+
+
+def compute_clip_lengths(n: int, total_duration: float) -> list:
+    """
+    Her klibin süresini hesaplar - artık EŞİT DEĞİL. İlk
+    INTRO_SCENE_COUNT kadar sahne, INTRO_SECONDS'a sıkıştırılarak HIZLI
+    bir giriş temposu yaratır (izleyiciyi kilitlemek için); kalan
+    sahneler kalan süreye normal (daha uzun) klip süresiyle dağıtılır.
+
+    Toplam sahne sayısı çok azsa (ör. n <= INTRO_SCENE_COUNT) ya da
+    ses süresi INTRO_SECONDS'tan kısaysa, güvenli şekilde eski (eşit
+    dağıtım) davranışına döner - pipeline hiçbir durumda kırılmaz.
+    """
+    if n <= INTRO_SCENE_COUNT or total_duration <= INTRO_SECONDS:
+        clip_len = (total_duration + (n - 1) * XFADE_DURATION) / n
+        clip_len = max(clip_len, XFADE_DURATION + 0.5)
+        return [clip_len] * n
+
+    intro_count = INTRO_SCENE_COUNT
+    outro_count = n - intro_count
+
+    intro_clip_len = (INTRO_SECONDS + (intro_count - 1) * XFADE_DURATION) / intro_count
+    intro_clip_len = max(intro_clip_len, XFADE_DURATION + 0.3)
+
+    remaining_duration = total_duration - INTRO_SECONDS
+    outro_clip_len = (remaining_duration + (outro_count - 1) * XFADE_DURATION) / outro_count
+    outro_clip_len = max(outro_clip_len, XFADE_DURATION + 0.5)
+
+    return [intro_clip_len] * intro_count + [outro_clip_len] * outro_count
 
 
 def extract_overlays(client, scenes):
@@ -281,7 +331,15 @@ def make_stock_video_clip(video_path: str, duration: float, callout_text: str,
     )
 
 
-def chain_with_xfade(clip_paths, clip_len, out_path):
+def chain_with_xfade(clip_paths, clip_lens, out_path):
+    """
+    Klipleri xfade geçişleriyle birleştirir. ARTIK klip süreleri EŞİT
+    OLMAK ZORUNDA DEĞİL (bkz. compute_clip_lengths) - offset hesaplaması
+    genel bir kümülatif formülle yapılıyor: offset_i = (i'ye kadarki
+    klip sürelerinin toplamı) - i*XFADE_DURATION. Eşit sürelerde bu
+    eski sabit formülle (i * (clip_len - XFADE_DURATION)) birebir
+    aynı sonucu verir, yani geriye dönük uyumlu.
+    """
     n = len(clip_paths)
     if n == 1:
         subprocess.run(["ffmpeg", "-y", "-i", clip_paths[0], "-c", "copy", out_path], check=True)
@@ -294,9 +352,10 @@ def chain_with_xfade(clip_paths, clip_len, out_path):
     filter_parts = []
     prev_label = "0:v"
     last_transition = None
+    cumulative = clip_lens[0]
 
     for i in range(1, n):
-        offset = i * (clip_len - XFADE_DURATION)
+        offset = cumulative - i * XFADE_DURATION
         out_label = f"v{i}" if i < n - 1 else "vout"
 
         choices = [t for t in TRANSITIONS if t != last_transition]
@@ -308,6 +367,7 @@ def chain_with_xfade(clip_paths, clip_len, out_path):
             f"duration={XFADE_DURATION}:offset={offset:.3f}[{out_label}]"
         )
         prev_label = out_label
+        cumulative += clip_lens[i]
 
     filter_complex = ";".join(filter_parts)
 
@@ -382,10 +442,17 @@ def main():
     total_duration = get_audio_duration(args.audio)
     n = len(scene_files)
 
-    clip_len = (total_duration + (n - 1) * XFADE_DURATION) / n
-    clip_len = max(clip_len, XFADE_DURATION + 0.5)
+    clip_lens = compute_clip_lengths(n, total_duration)
 
-    print(f"{n} sahne, her biri ~{clip_len:.1f}sn (geçişlerle toplam ~{total_duration:.1f}sn)")
+    intro_n = min(INTRO_SCENE_COUNT, n) if (n > INTRO_SCENE_COUNT and total_duration > INTRO_SECONDS) else 0
+    if intro_n:
+        print(f"{n} sahne -> ilk {intro_n} sahne {INTRO_SECONDS}sn'ye sıkıştırıldı "
+              f"(~{clip_lens[0]:.1f}sn/klip, hızlı giriş temposu), "
+              f"kalan {n - intro_n} sahne ~{clip_lens[-1]:.1f}sn/klip "
+              f"(toplam ~{total_duration:.1f}sn)")
+    else:
+        print(f"{n} sahne, her biri ~{clip_lens[0]:.1f}sn (geçişlerle toplam ~{total_duration:.1f}sn) "
+              f"[giriş yoğunlaştırması atlandı: sahne/süre yetersiz]")
 
     clip_paths = []
     last_style = None
@@ -394,25 +461,26 @@ def main():
 
     for i, scene_file in enumerate(scene_files):
         clip_path = f"clip_{i:03d}.mp4"
+        clip_len_i = clip_lens[i]
         callout = overlays[i]["callout"] if i < len(overlays) else ""
         info_card = overlays[i]["info_card"] if i < len(overlays) else ""
 
         is_stock_video = scene_file.lower().endswith(".mp4")
 
         if is_stock_video:
-            make_stock_video_clip(scene_file, clip_len, callout, info_card, clip_path)
+            make_stock_video_clip(scene_file, clip_len_i, callout, info_card, clip_path)
             stock_count += 1
             style_label = "stok video (doğal hareket)"
         else:
             style_choices = [s for s in ANIMATION_STYLES if s != last_style]
             style = random.choice(style_choices)
             last_style = style
-            make_ken_burns_clip(scene_file, clip_len, callout, info_card, style, clip_path)
+            make_ken_burns_clip(scene_file, clip_len_i, callout, info_card, style, clip_path)
             ai_count += 1
             style_label = f"animasyon:{style}"
 
         clip_paths.append(clip_path)
-        tags = [style_label]
+        tags = [style_label, f"{clip_len_i:.1f}sn"]
         if callout:
             tags.append(f"vurgu:'{callout}'")
         if info_card:
@@ -422,7 +490,7 @@ def main():
     print(f"({stock_count} stok video klip, {ai_count} AI görsel klip)")
 
     silent_video = "silent_video.mp4"
-    chain_with_xfade(clip_paths, clip_len, silent_video)
+    chain_with_xfade(clip_paths, clip_lens, silent_video)
 
     add_logo_and_audio(silent_video, args.audio, args.out)
 
