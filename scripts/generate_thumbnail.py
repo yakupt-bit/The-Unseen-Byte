@@ -110,9 +110,13 @@ BRAND_SAFETY_INSTRUCTION = (
     "characters, or recognizable third-party product packaging - keep "
     "all objects generic/unbranded (e.g. an unmarked cartridge, a "
     "plain unlabeled box), not tied to any specific real company or IP. "
-    "Do NOT include any signs, placards, labels, handwriting, or any "
-    "readable text/words/numbers anywhere in the scene - the image "
-    "must be completely free of text, since text is added separately."
+    "If people appear in the scene, they must be GENERIC/FICTIONAL "
+    "figures - NOT a real, identifiable public figure, celebrity, or "
+    "executive, and not wearing any real company's branded clothing/"
+    "badges. Do NOT include any signs, placards, labels, handwriting, "
+    "or any readable text/words/numbers anywhere in the scene - the "
+    "image must be completely free of text, since text is added "
+    "separately."
 )
 
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
@@ -411,11 +415,16 @@ SCRIPT'TEN KISA ALINTI: {script_excerpt[:800]}
 Üret:
 1. "visual_prompt": İngilizce, GENİŞ VE ATMOSFERİK bir SAHNE tarifi -
    sadece tek bir nesneye aşırı yakın çekim DEĞİL, gerçek bir mekan/
-   bağlam hissi olan bir sahne (ör. tozlu bir atölye masası, karanlık
-   bir arşiv odası, eski bir sunucu odası). Net bir ışık kaynağı ve
-   net bir odak noktası olsun ama sahne "boş" durmasın, derinlik ve
-   doku hissi versin. Kişi/karakter/yüz KULLANMA. Sahnede HİÇBİR yazı/
-   tabela/etiket OLMASIN.
+   bağlam hissi olan bir sahne. Net bir ışık kaynağı ve net bir odak
+   noktası olsun ama sahne "boş" durmasın, derinlik ve doku hissi
+   versin. EĞER konu/script buna uygunsa (ör. iki taraf/şirket arasında
+   bir çatışma, bir müzakere, bir yüzleşme, bir karar anı), İNSAN
+   FİGÜRÜ/KARAKTER kullanarak script'in EN DRAMATİK anını canlandır -
+   jenerik/kurgusal figürler olsun, gerçek bir kişi/ünlü OLMASIN. Konu
+   saf teknik/nesne odaklıysa (insan draması yoksa) yine nesne-odaklı
+   yakın çekim formatını tercih et - insan figürü ZORUNLU değil, sadece
+   hikayeyi güçlendiriyorsa kullan. Sahnede HİÇBİR yazı/tabela/etiket
+   OLMASIN.
 2. "hook_text": İngilizce, TÜM BÜYÜK HARF, 2 İLA 6 KELİME ARASI (kesin
    2-3 kelime şartı YOK artık), 1-3 satıra bölünebilir, başlığın
    merakını yansıtan, iddialı ama tamamen soyut olmayan bir ifade.
