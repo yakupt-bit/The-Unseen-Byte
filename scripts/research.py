@@ -12,8 +12,21 @@ işleniyor, ekstra bir kod döngüsüne gerek yok.
 
 Elle bir TOPIC_HINT verilmezse, aşağıdaki 18 alt-nişten (6 ana kategori,
 her birinde 3 alt-niş) biri, ÜRETİLEN VİDEO SAYISINA göre sırayla
-seçilir - böylece takvim günü atlasa da (haftada 3 gün yayın) rotasyon
+seçilir - böylece takvim günü atlasa da (haftada 2 gün yayın) rotasyon
 düzgün ilerler, gün bazlı değildir.
+
+--- BUGÜNKÜ KRİTİK BUG DÜZELTMESİ (SUB_NICHES - "Hardware & Science
+Myths" kategorisi çöküyordu) ---
+"Engineering Myths" ve "Thermal & Performance Science" alt-niş
+tanımları GAMING bağlamını hiç içermiyordu ("gaming" kelimesi hiç
+geçmiyordu). Bu yüzden bu alt-niş seçildiğinde research.py genel
+PC/veri merkezi/endüstriyel donanım konuları üretiyordu (ör. "AI Data
+Centers", "nanometre pazarlama yalanı") - niche_check.py bunları HER
+SEFERİNDE "gaming endüstrisiyle ilgisi yok" diye reddediyordu. Sonuç:
+bu alt-niş seçildiğinde MAX_ATTEMPTS(5) hakkının hepsi bu tuzağa
+harcanıyor ve TÜM RUN ÇÖKÜYORDU (gerçek bir prodüksiyon run'ında
+gözlemlendi). Artık her iki tanım da AÇIKÇA "gaming hardware/consoles"
+bağlamına sabitlendi - niche_check ile artık uyumlu olmalı.
 
 RETRY_OFFSET ortam değişkeni verilirse (workflow'daki yeniden deneme
 döngüsü tarafından ayarlanır), rotasyonu o kadar ileri kaydırır - böylece
@@ -49,10 +62,10 @@ SUB_NICHES = [
     "Studio Behind-the-Scenes - internal decisions, crunch culture, and the real production stories behind games",
     "Corporate Strategy - business decisions and rivalries that shaped the gaming industry",
     "Marketing & Launch Secrets - how games are actually marketed, hyped, and sometimes deceptively sold",
-    # --- Hardware & Science Myths ---
-    "Engineering Myths - popular hardware beliefs that are wrong, half-true, or verified by real engineering",
-    "Thermal & Performance Science - the real science behind overheating, throttling, and hardware limits",
-    "Signal & Data Mysteries - how data, networking, and signal processing actually work inside gaming hardware",
+    # --- Hardware & Science Myths (bugün gaming'e AÇIKÇA sabitlendi) ---
+    "Gaming Hardware Engineering Myths - popular beliefs about gaming PCs, consoles, and controllers that are wrong, half-true, or verified by real engineering (must stay tied to gaming/console hardware, not general enterprise tech)",
+    "Gaming Console & PC Thermal Science - the real science behind overheating, throttling, and hardware limits specifically in gaming consoles and gaming PCs (not data centers or general computing)",
+    "Signal & Data Mysteries - how data, networking, and signal processing actually work inside gaming hardware (controllers, online multiplayer, matchmaking servers)",
     # --- Esports & Competitive Culture ---
     "Pro Player Psychology - the mental training, burnout, and competitive mindset of professional gamers",
     "Tournament Controversies - cheating scandals and behind-the-scenes esports drama",
@@ -81,6 +94,17 @@ GROUNDING_INSTRUCTION = (
     "bir ifadeyle değiştir - kesinlikle uydurma bir kaynak gösterme. "
     "Doğrulanmış, gerçek kaynaklar kullanılmış bir konu, hiç "
     "kaynaklanmamış ama iddialı bir konudan her zaman daha değerlidir."
+)
+
+NICHE_ANCHOR_INSTRUCTION = (
+    "\n\nÖNEMLİ - NİŞ SABİTLEME: Bu kanal SADECE gaming/video oyunları "
+    "endüstrisi, teknolojisi ve kültürüyle ilgili içerik üretir. Konu "
+    "başlığında 'hardware', 'engineering', 'thermal', 'science' gibi "
+    "genel teknik kelimeler geçse bile, ele aldığın konu MUTLAKA "
+    "video oyunları/gaming konsolları/gaming PC'leri bağlamında "
+    "kalmalı - genel kurumsal teknoloji (ör. veri merkezleri, "
+    "kurumsal sunucular, genel yarı iletken pazarlaması) KESİNLİKLE "
+    "ELE ALINMAMALI, bu niş dışı sayılır ve reddedilir."
 )
 
 
@@ -119,6 +143,7 @@ def load_prompt(topic_hint: str, used_topics: list) -> str:
         )
         prompt += avoid_block
 
+    prompt += NICHE_ANCHOR_INSTRUCTION
     prompt += GROUNDING_INSTRUCTION
 
     return prompt
