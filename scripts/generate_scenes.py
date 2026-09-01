@@ -1,23 +1,24 @@
 """
-Script'i sahnelere ayırır. Her sahne için ÖNCE Claude'a sahnenin GENEL/
-ATMOSFERİK mi yoksa script'e ÖZGÜ/BENZERSİZ bir an mı olduğunu sorar:
+Script'i sahnelere ayırır ve HER sahneyi Pexels STOK VİDEOSU ile
+doldurur. AI görsel üretimi (Wiro / openai gpt-image-2) TAMAMEN
+KALDIRILDI - artık hiçbir koşulda Wiro'ya task açılmaz, dolayısıyla
+Wiro bakiyesi / eşzamanlılık limiti (code 96) bu adımı ASLA düşüremez.
 
-  - GENEL/ATMOSFERİK sahneler (çoğunluk) -> Pexels'ten stok video aranır
-    (ör. klavye yazan eller, sunucu odası, retro konsol genel çekimi).
-    Bulunursa scene_XXX.mp4 olarak kaydedilir.
-  - ÖZGÜ/BENZERSİZ sahneler (script'in tam olarak bahsettiği tek bir
-    nesne/an) veya Pexels'te uygun sonuç bulunamazsa -> önce GÖRSEL
-    KÜTÜPHANESİNDE (assets/scene_library/) benzer etiketli bir görsel
-    aranır (maliyet tasarrufu); bulunamazsa AI görsel üretimine (Wiro,
-    openai/gpt-image-2) düşülür ve üretilen görsel gelecekte tekrar
-    kullanılabilmesi için kütüphaneye eklenir.
+SAHNE DOLDURMA STRATEJİSİ (her sahne için sırayla, ilk başarılı olan
+kullanılır - hiçbir aşamada job KIRILMAZ):
+  1. Claude'un ürettiği sahneye ÖZGÜ stok sorgusu (stock_query) ile
+     Pexels aranır.
+  2. Bulunamazsa, JENERİK YEDEK SORGULAR (GENERIC_FALLBACK_QUERIES)
+     sırayla denenir - nişe uygun genel tech/gaming görüntüleri.
+  3. O da bulunamazsa (ör. Pexels'te uygun kalmadıysa / hepsi bu koşuda
+     kullanıldıysa), EN YAKIN (bir önceki başarılı) stok klibi kopyalanır.
+  4. Hiç önceki klip yoksa (ör. ilk sahne herşeyde başarısız), en son
+     çare olarak düz renkli kısa bir kart (ffmpeg) üretilir.
 
-assemble_video.py hem .png (Ken Burns animasyonu) hem .mp4 (stok video,
-trim/loop) sahneleri birlikte işleyebiliyor.
+Böylece scene_images adımı HER ZAMAN eksiksiz bir sahne seti üretir,
+tek bir sahne yüzünden onlarca tamamlanmış sahne çöpe gitmez.
 
-ÖNEMLİ: assets/scene_library/index.json ve içindeki görseller, bu
-script çalıştıktan SONRA workflow'un "Save topic history" adımında
-repoya commit edilmeli ki bir sonraki çalıştırmada da kullanılabilsin.
+assemble_video.py stok video (.mp4) sahnelerini trim/loop ile işler.
 
 Claude API çağrıları geçici hatalara (500, rate limit, bağlantı
 kopması) karşı otomatik olarak yeniden dener (bkz. call_claude).
@@ -26,7 +27,6 @@ Kullanım:
     python scripts/generate_scenes.py --script script.md --out scenes/
 """
 import argparse
-import hashlib
 import json
 import os
 import random
@@ -40,28 +40,33 @@ import anthropic
 import requests
 from mutagen.mp3 import MP3
 
-from wiro_client import run_model, download_output
-
-STYLE_GUIDE = (
-    "cinematic documentary B-roll style, warm dramatic lighting, "
-    "tech/gaming themed, atmospheric and detailed, 16:9"
-)
-
 MODEL = "claude-sonnet-4-6"
 MODEL_UTILITY = "claude-haiku-4-5-20251001"
-SENTENCES_PER_SCENE = 2  # her sahne ~3 cümle - stok video sık değişsin
-MAX_SCENES = 120 # güvenlik üst sınırı, render süresi patlamasın
+SENTENCES_PER_SCENE = 2  # her sahne ~2 cümle - stok video sık değişsin
+MAX_SCENES = 120  # güvenlik üst sınırı, render süresi patlamasın
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
-
-SCENE_LIBRARY_DIR = "assets/scene_library"
-SCENE_LIBRARY_INDEX = os.path.join(SCENE_LIBRARY_DIR, "index.json")
-MIN_TAG_OVERLAP = 2  # en az bu kadar ortak etiket varsa "benzer" say
 
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
 
 MIN_STOCK_DURATION_RATIO = 0.7  # kaynak klip, hedef süresinin en az bu oranı kadar olmalı
+
+# Sahneye özgü sorgu Pexels'te sonuç vermezse sırayla denenecek jenerik
+# yedek sorgular. Nişe (tech/gaming/mystery) uygun, her zaman bol
+# sonuç veren genel görüntüler. used_video_ids sayesinde aynı koşuda
+# aynı klip iki kez seçilmez, bu yüzden bu havuz görsel tekrarını da
+# minimize eder.
+GENERIC_FALLBACK_QUERIES = [
+    "abstract technology background",
+    "digital data network",
+    "glowing circuit board macro",
+    "server room lights",
+    "futuristic technology motion",
+    "retro electronics close up",
+    "dark cinematic tech background",
+    "computer hardware components",
+]
 
 RETRYABLE_EXCEPTIONS = (
     anthropic.APIConnectionError,
@@ -73,13 +78,12 @@ RETRYABLE_EXCEPTIONS = (
 
 def estimate_target_clip_length(scene_count: int) -> float | None:
     """
-    audio/final_mix.mp3 (6. adımda üretilir, bu script 7. adımda çalışır,
-    yani dosya zaten hazırdır) süresini okuyup sahne sayısına bölerek
-    HER klibin yaklaşık ne kadar süreceğini tahmin eder. Bu tahmin,
-    Pexels'ten SEÇERKEN çok kısa (döngüye girip tekrar tekrar oynayacak)
-    klipleri elemek için kullanılır - amaç, tek bir sahnenin kendi
-    içinde aynı birkaç saniyelik görüntünün defalarca tekrarlanmasını
-    önlemek.
+    audio/final_mix.mp3 mevcutsa süresini okuyup sahne sayısına bölerek
+    HER klibin yaklaşık ne kadar süreceğini tahmin eder; Pexels'ten
+    SEÇERKEN çok kısa klipleri elemek için kullanılır. NOT: bu adım
+    (scene_images) pipeline'da final_mix'i indirmediği için dosya
+    çoğu zaman burada YOKTUR - o durumda None döner ve süre filtresi
+    devre dışı kalır (sorun değil, tekli-klip yedeği devreye girer).
     """
     audio_path = "audio/final_mix.mp3"
     if not os.path.exists(audio_path) or scene_count <= 0:
@@ -116,11 +120,9 @@ def call_claude(client, prompt, model=MODEL, max_tokens=300):
 
 def split_into_scenes(script_text: str):
     """
-    Script'i CÜMLE bazlı böler, her sahne SENTENCES_PER_SCENE (3) cümle
-    içerir - böylece stok video sık sık (her 2-3 cümlede bir) değişir,
-    tek bir görüntü uzun süre ekranda kalmaz. MAX_SCENES sadece bir
-    güvenlik üst sınırı - script çok uzun çıkarsa render süresi/maliyeti
-    kontrolsüz büyümesin diye devreye girer.
+    Script'i CÜMLE bazlı böler, her sahne SENTENCES_PER_SCENE cümle
+    içerir - böylece stok video sık sık değişir, tek bir görüntü uzun
+    süre ekranda kalmaz. MAX_SCENES sadece bir güvenlik üst sınırı.
     """
     normalized = re.sub(r"\n{2,}", " ", script_text).strip()
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", normalized) if s.strip()]
@@ -138,126 +140,39 @@ def split_into_scenes(script_text: str):
     return merged
 
 
-def plan_scene(client, narration_paragraph: str) -> dict:
+def make_scene_query(client, narration_paragraph: str) -> str:
     """
-    Sahne için stok video arama sorgusu, AI görsel tarifi, "stok video
-    için uygun mu" kararı VE görsel kütüphanesinde eşleşme aramak için
-    jenerik etiketleri tek çağrıda üretir.
+    Sahne için İngilizce, 2-4 kelimelik JENERİK bir Pexels stok video
+    arama sorgusu üretir (ucuz Haiku modeliyle). Herhangi bir hata /
+    parse sorununda boş string döner - çağıran taraf jenerik yedek
+    sorgulara düşer, pipeline kırılmaz.
     """
-    prompt = f"""Aşağıdaki YouTube anlatım paragrafı için bir sahne planı
-üret.
-
-ÖNCE KARAR VER: Bu paragraf GENEL/ATMOSFERİK bir an mı (ör. bir
-kavramı, ortamı, genel bir eylemi anlatıyor - stok video ile
-karşılanabilir) yoksa script'in TAM OLARAK bahsettiği TEK, BENZERSİZ,
-SPESİFİK bir nesne/an mı (ör. belirli bir prototipin belirli bir
-detayı - sadece özel üretilmiş bir görselle karşılanabilir)?
-Mümkün olduğunca "genel/atmosferik" (use_stock: true) sınıflandırmayı
-tercih et, çünkü stok video daha gerçekçi durur - sadece gerçekten
-script'e özgü, somut bir detay varsa use_stock: false yap.
-
-Üret:
-1. "use_stock": true veya false (yukarıdaki karara göre)
-2. "stock_query": İngilizce, 2-4 kelimelik, JENERİK bir stok video
-   arama sorgusu (ör. "server room lights", "retro game console",
-   "typing keyboard close up"). Marka/gerçek kişi/oyun adı KULLANMA.
-3. "visual_prompt": AI görsel üretimi için İngilizce, 1-2 cümlelik
-   sahne tarifi (use_stock false ise, stok bulunamazsa, ya da
-   kütüphanede eşleşme yoksa kullanılacak yedek). Gerçek kişi/marka/
-   oyun adı kullanma, insan yüzünü minimize et (silüet/arkadan çekim/
-   eller tercih et), şiddet/silah/kan içerme.
-4. "tags": 3-6 adet İngilizce, JENERİK, tekil kelime/kısa öbeklerden
-   oluşan bir liste - bu görsel BAŞKA bir videoda da benzer bir sahne
-   gerektiğinde eşleştirme için kullanılacak (ör. ["server room",
-   "blue lighting", "cables", "dark atmosphere"]). Marka/oyun adı
-   KULLANMA, sadece görselin genel içeriğini/atmosferini tarif eden
-   jenerik kelimeler kullan.
+    prompt = f"""Aşağıdaki YouTube anlatım paragrafı için, Pexels'te
+STOK VİDEO aramaya uygun İngilizce, 2-4 kelimelik JENERİK bir arama
+sorgusu üret. Marka / gerçek kişi / oyun adı KULLANMA. Genel, kolay
+bulunur bir görüntü olsun (ör. "server room lights", "retro game
+console", "typing keyboard close up", "circuit board macro").
 
 ANLATIM PARAGRAFI:
 {narration_paragraph}
 
-Çıktı SADECE JSON: {{"use_stock": true, "stock_query": "...", "visual_prompt": "...", "tags": ["...", "..."]}}"""
-
-    # NOT: Bu basit bir sınıflandırma/etiketleme işi, video başına 15-20
-    # kez tekrarlandığı için ucuz modelle (Haiku) yapılıyor - Sonnet'e
-    # göre çok daha düşük maliyetli, kalite kaybı bu iş için ihmal
-    # edilebilir düzeyde.
-    raw = call_claude(client, prompt, model=MODEL_UTILITY)
-    cleaned = raw.replace("```json", "").replace("```", "").strip()
+Çıktı SADECE JSON: {{"stock_query": "..."}}"""
     try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        return {
-            "use_stock": False,
-            "stock_query": "",
-            "visual_prompt": "a moody abstract technology visualization, "
-                              "no people, no text",
-            "tags": [],
-        }
-
-
-def load_library() -> list:
-    if not os.path.exists(SCENE_LIBRARY_INDEX):
-        return []
-    try:
-        with open(SCENE_LIBRARY_INDEX, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def save_library(library: list):
-    os.makedirs(SCENE_LIBRARY_DIR, exist_ok=True)
-    with open(SCENE_LIBRARY_INDEX, "w", encoding="utf-8") as f:
-        json.dump(library, f, ensure_ascii=False, indent=2)
-
-
-def find_reusable_image(library: list, tags: list):
-    """Etiket kümesi en çok örtüşen kütüphane kaydını döndürür (eşik
-    üzerindeyse). Bulamazsa None döner."""
-    if not tags:
-        return None
-
-    tags_set = {t.lower().strip() for t in tags}
-    best_entry = None
-    best_overlap = 0
-
-    for entry in library:
-        entry_tags = {t.lower().strip() for t in entry.get("tags", [])}
-        overlap = len(tags_set & entry_tags)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_entry = entry
-
-    if best_entry and best_overlap >= MIN_TAG_OVERLAP:
-        return best_entry
-    return None
-
-
-def add_to_library(library: list, tags: list, image_path: str):
-    """Üretilen görseli kütüphaneye (kalıcı klasöre) kopyalar ve
-    index'e etiketleriyle birlikte kaydeder."""
-    if not tags:
-        return
-
-    os.makedirs(SCENE_LIBRARY_DIR, exist_ok=True)
-    with open(image_path, "rb") as f:
-        content_hash = hashlib.sha1(f.read()).hexdigest()[:12]
-    stored_path = os.path.join(SCENE_LIBRARY_DIR, f"{content_hash}.png")
-
-    if not os.path.exists(stored_path):
-        shutil.copyfile(image_path, stored_path)
-
-    library.append({"tags": tags, "file": stored_path})
-    save_library(library)
+        raw = call_claude(client, prompt, model=MODEL_UTILITY, max_tokens=120)
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        data = json.loads(cleaned)
+        q = str(data.get("stock_query", "")).strip()
+        return q
+    except Exception:
+        return ""
 
 
 def concat_clips(clip_paths: list, out_path: str) -> bool:
     """
     Birden fazla stok klibi (farklı çözünürlük/fps olabilir) tek bir
-    videoda birleştirir. Amaç: tek bir kısa klibi döngüye sokup aynı
-    görüntüyü tekrar tekrar oynatmak yerine, FARKLI klipleri art arda
-    göstererek hedef süreyi doldurmak. Başarısız olursa False döner.
+    videoda birleştirir - tek kısa klibi döngüye sokmak yerine FARKLI
+    klipleri art arda göstererek hedef süreyi doldurur. Başarısızsa
+    False döner.
     """
     try:
         inputs = []
@@ -294,22 +209,12 @@ def concat_clips(clip_paths: list, out_path: str) -> bool:
 
 
 def search_pexels_video(query: str, api_key: str, out_path: str,
-                         used_video_ids: set, target_clip_length: float | None) -> bool:
+                        used_video_ids: set, target_clip_length: float | None) -> bool:
     """
-    Pexels'te sorguyu arar. Aynı video (çalıştırma) içinde DAHA ÖNCE
-    kullanılmış bir klip KESİNLİKLE tekrar seçilmez.
-
-    ÖNEMLİ (döngü/tekrar sorunu önleme), üç kademeli strateji:
-      1. Süresi hedefin en az %70'i kadar olan TEK bir klip varsa onu
-         kullan (en temiz sonuç, döngüye hiç gerek kalmaz).
-      2. Yoksa, birden fazla FARKLI kısa klibi birleştirerek (concat)
-         hedef süreyi doldurmaya çalış - aynı görüntü değil, farklı
-         görüntüler art arda gösterilir.
-      3. O da olmazsa (nadir), en son çare olarak tek kısa klip kullanılır
-         (assemble_video.py bunu döngüye sokar - eskisi gibi).
-
-    Hiçbir uygun/kullanılmamış klip yoksa False döner (bu durumda
-    çağıran taraf AI görsel üretimine düşer).
+    Pexels'te sorguyu arar. Aynı çalıştırma içinde DAHA ÖNCE kullanılmış
+    bir klip tekrar seçilmez. Üç kademeli: (1) yeterince uzun tek klip,
+    (2) birden fazla kısa klibi birleştir, (3) tek kısa klip. Hiçbir
+    uygun/kullanılmamış klip yoksa False döner.
     """
     if not api_key or not query:
         return False
@@ -395,15 +300,13 @@ def search_pexels_video(query: str, api_key: str, out_path: str,
                         for video, _ in combo:
                             used_video_ids.add(video.get("id"))
                         return True
-                    # concat başarısız oldu, aşağıdaki tekli-klip
-                    # yedeğine düş
+                    # concat başarısız, aşağıdaki tekli-klip yedeğine düş
                 finally:
                     for p in temp_paths:
                         if os.path.exists(p):
                             os.remove(p)
 
-        # 3) En son çare: tek kısa klip (döngüye girecek, ama hiç
-        # görüntü olmamasından iyidir)
+        # 3) En son çare: tek kısa klip
         chosen_video, chosen_file = random.choice(eligible_short)
         video_resp = requests.get(chosen_file["link"], stream=True, timeout=60)
         video_resp.raise_for_status()
@@ -417,51 +320,48 @@ def search_pexels_video(query: str, api_key: str, out_path: str,
         return False
 
 
-def generate_image(prompt: str, out_path: str):
-    full_prompt = f"{STYLE_GUIDE}. Scene: {prompt}"
-    task = run_model("openai", "gpt-image-2", {
-        "prompt": full_prompt,
-        "resolution": "1k",
-        "ratio": "16:9",
-        "quality": "medium",
-        "samples": 1,
-    })
-    download_output(task, out_path)
+def find_stock_for_scene(client, scene_text: str, pexels_key: str, mp4_path: str,
+                         used_video_ids: set, target_clip_length: float | None,
+                         scene_index: int):
+    """
+    Bir sahne için stok video bulmayı dener: önce sahneye özgü sorgu,
+    olmazsa jenerik yedek sorgular (her sahnede farklı bir sıradan
+    başlar ki hep aynı klip tükenmesin). Başarılı olursa kullanılan
+    sorgunun jenerik olup olmadığını (bool) ve True döner; hiçbiri
+    tutmazsa (None, False) döner.
+    """
+    specific_query = make_scene_query(client, scene_text)
+
+    queries = []
+    if specific_query:
+        queries.append(specific_query)
+
+    # Jenerik havuzu sahne indeksine göre döndür (rotate) - böylece her
+    # sahne farklı bir jenerik sorguyla başlar, ilk sorgular tükenmez.
+    rot = scene_index % len(GENERIC_FALLBACK_QUERIES)
+    rotated_generics = GENERIC_FALLBACK_QUERIES[rot:] + GENERIC_FALLBACK_QUERIES[:rot]
+    queries += rotated_generics
+
+    for qi, query in enumerate(queries):
+        if search_pexels_video(query, pexels_key, mp4_path, used_video_ids, target_clip_length):
+            is_generic = (specific_query == "") or (qi > 0)
+            return query, is_generic, True
+
+    return None, False, False
 
 
-FALLBACK_PROMPTS = [
-    "a moody abstract technology visualization, flowing data streams, deep blue and purple gradient, no people, no text",
-    "a dramatic close-up of glowing circuit board patterns, warm amber lighting, macro photography style, no people, no text",
-    "an atmospheric server room corridor with soft blue light trails, cinematic depth of field, no people, no text",
-    "a stack of retro gaming cartridges and consoles on a wooden desk, warm dramatic side lighting, no people, no text",
-    "an abstract network of glowing connected nodes on a dark background, cinematic and mysterious, no people, no text",
-]
-
-
-def generate_image_with_fallback(client, visual_prompt: str, out_path: str):
-    try:
-        generate_image(visual_prompt, out_path)
-        return
-    except RuntimeError as e:
-        if "safety system" not in str(e).lower():
-            raise
-
-    print("  UYARI: güvenlik reddi, daha soyut bir tarifle tekrar deniyorum...")
-    try:
-        stricter_prompt = (
-            "a completely abstract, symbolic visual representation (no "
-            "literal depiction) inspired by this idea, purely artistic "
-            f"shapes/colors/lighting only: {visual_prompt[:150]}"
-        )
-        generate_image(stricter_prompt, out_path)
-        return
-    except RuntimeError as e:
-        if "safety system" not in str(e).lower():
-            raise
-
-    print("  UYARI: ikinci deneme de reddedildi, jenerik görsellerden biriyle devam ediyorum...")
-    fallback_prompt = random.choice(FALLBACK_PROMPTS)
-    generate_image(fallback_prompt, out_path)
+def make_placeholder_clip(out_path: str, duration: float | None):
+    """En son çare: hiç stok bulunamaz ve kopyalanacak önceki klip de
+    yoksa, düz koyu renkli kısa bir kart üretir - böylece sahne dosyası
+    yine de oluşur ve pipeline kırılmaz."""
+    dur = duration if (duration and duration > 0) else 5.0
+    dur = max(3.0, min(dur, 20.0))
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi",
+         "-i", f"color=c=0x0a0e14:s=1280x720:r=25:d={dur:.1f}",
+         "-pix_fmt", "yuv420p", out_path],
+        check=True, capture_output=True,
+    )
 
 
 def main():
@@ -478,7 +378,6 @@ def main():
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     pexels_key = os.environ.get("PEXELS_API_KEY", "")
     scenes = split_into_scenes(script_text)
-    library = load_library()
     used_video_ids = set()  # aynı çalıştırma içinde tekrar klip seçilmesin
     target_clip_length = estimate_target_clip_length(len(scenes))
     if target_clip_length:
@@ -486,42 +385,46 @@ def main():
               f"(kısa klipler döngü sorununu önlemek için elenecek)")
 
     stock_count = 0
-    ai_count = 0
+    generic_count = 0
     reused_count = 0
+    placeholder_count = 0
+    last_good_clip = None  # yalnızca GERÇEK indirilen stok klip
 
     for i, scene_text in enumerate(scenes, start=1):
-        plan = plan_scene(client, scene_text)
+        mp4_path = os.path.join(args.out, f"scene_{i:03d}.mp4")
 
-        got_stock = False
-        if plan.get("use_stock"):
-            mp4_path = os.path.join(args.out, f"scene_{i:03d}.mp4")
-            got_stock = search_pexels_video(plan.get("stock_query", ""), pexels_key,
-                                             mp4_path, used_video_ids, target_clip_length)
-            if got_stock:
-                stock_count += 1
-                print(f"Sahne {i}/{len(scenes)}: STOK video -> {mp4_path} "
-                      f"(sorgu: \"{plan.get('stock_query')}\")")
+        query, is_generic, got_stock = find_stock_for_scene(
+            client, scene_text, pexels_key, mp4_path,
+            used_video_ids, target_clip_length, scene_index=i - 1,
+        )
 
-        if not got_stock:
-            png_path = os.path.join(args.out, f"scene_{i:03d}.png")
-            tags = plan.get("tags", [])
-            reusable = find_reusable_image(library, tags)
+        if got_stock:
+            stock_count += 1
+            if is_generic:
+                generic_count += 1
+            tag = "STOK video (jenerik yedek)" if is_generic else "STOK video"
+            print(f"Sahne {i}/{len(scenes)}: {tag} -> {mp4_path} (sorgu: \"{query}\")")
+            last_good_clip = mp4_path
+            continue
 
-            if reusable and os.path.exists(reusable["file"]):
-                shutil.copyfile(reusable["file"], png_path)
-                reused_count += 1
-                print(f"Sahne {i}/{len(scenes)}: KÜTÜPHANEDEN yeniden kullanıldı "
-                      f"-> {png_path} (eşleşen etiketler: {tags})")
-            else:
-                generate_image_with_fallback(client, plan.get("visual_prompt", ""), png_path)
-                add_to_library(library, tags, png_path)
-                ai_count += 1
-                print(f"Sahne {i}/{len(scenes)}: AI görsel (yeni, kütüphaneye "
-                      f"eklendi) -> {png_path}")
+        # Stok hiç bulunamadı - en yakın (önceki) klibi kopyala
+        if last_good_clip and os.path.exists(last_good_clip):
+            shutil.copyfile(last_good_clip, mp4_path)
+            reused_count += 1
+            print(f"Sahne {i}/{len(scenes)}: stok bulunamadı, EN YAKIN önceki "
+                  f"klip kopyalandı -> {mp4_path}")
+            continue
 
-    print(f"\nToplam: {stock_count} stok video, {ai_count} yeni AI görsel, "
-          f"{reused_count} kütüphaneden yeniden kullanıldı "
-          f"({len(scenes)} sahne)")
+        # Hiç önceki klip de yok - en son çare düz renk kartı
+        make_placeholder_clip(mp4_path, target_clip_length)
+        placeholder_count += 1
+        print(f"Sahne {i}/{len(scenes)}: stok/önceki klip yok, düz renk "
+              f"kartı üretildi -> {mp4_path}")
+
+    print(f"\nToplam: {stock_count} stok video "
+          f"({generic_count} jenerik yedek sorguyla), "
+          f"{reused_count} en-yakın-klip kopyası, "
+          f"{placeholder_count} renk kartı ({len(scenes)} sahne)")
 
 
 if __name__ == "__main__":
