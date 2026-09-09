@@ -51,6 +51,13 @@ name: Produce Video (fully automated)
 #     olarak yüklüyor.
 #   - save_topic_history bu Artifact'leri İNDİRİP commit ediyor,
 #     touch ile üzerine boş dosya yazmıyor.
+#
+# AYNI BUG used_titles.json'DA DA VARDI (sonradan fark edildi): generate_titles.py
+# başlık şablonu tekrarını önlemek için bu dosyayı okuyup güncelliyordu ama
+# content-bundle Artifact'ine dahil değildi ve save_topic_history onu hiç
+# commit etmiyordu - yani her koşu, önceki hiçbir başlığı görmeden SIFIRDAN
+# başlıyordu. Aynı düzeltme (content-bundle'a ekle + save_topic_history'de
+# commit et) buraya da uygulandı.
 
 on:
   workflow_dispatch:
@@ -181,6 +188,7 @@ jobs:
             script.md
             titles.json
             used_topics.json
+            used_titles.json
           retention-days: 7
 
   # ---------------------------------------------------------------
@@ -467,7 +475,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p assets/scene_library
-          git add used_topics.json used_comments.json assets/scene_library/
+          git add used_topics.json used_comments.json used_titles.json assets/scene_library/
           git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
           git pull --rebase origin main || true
           git push
