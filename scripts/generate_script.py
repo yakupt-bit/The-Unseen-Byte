@@ -183,12 +183,34 @@ SCRIPT:
 Çıktı SADECE şu JSON formatında olsun:
 {{"score": 1-10 arası tam sayı, "feedback": "kısa, uygulanabilir eleştiri"}}
 """
-    raw = call_claude(client, prompt, model=MODEL_UTILITY, max_tokens=500)
-    cleaned = raw.replace("```json", "").replace("```", "").strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        return {"score": 10, "feedback": ""}
+    # generate_titles.py / generate_thumbnail.py'deki AYNI mantık: parse
+    # hatasında SESSİZCE "score: 10" (mükemmel) döndürmek, kalite kontrolünü
+    # HİÇ ÇALIŞMAMIŞ gibi görünecek şekilde her zaman GEÇİRİYORDU - gerçekte
+    # script hiç değerlendirilmemiş olabiliyordu. Şimdi önce birkaç kez
+    # tekrar deniyor, hâlâ başarısız olursa QUALITY_THRESHOLD'u kullanıyor
+    # (kör/rehbersiz bir revizyon script'e zarar verebileceği için script
+    # olduğu gibi kabul ediliyor - ama en azından bunu ACIKÇA logluyor,
+    # sahte bir "mükemmel" puan iddia etmiyor).
+    last_raw = ""
+    for attempt in range(1, 3):
+        raw = call_claude(client, prompt, model=MODEL_UTILITY, max_tokens=500)
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        last_raw = cleaned
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+        if attempt < 2:
+            print(f"  UYARI: kalite puanı parse edilemedi (deneme {attempt}/2), "
+                  f"tekrar deneniyor...")
+
+    print(f"  UYARI: kalite puanı 2 denemede de parse edilemedi, script "
+          f"olduğu gibi kabul ediliyor (kör revizyon riskinden kaçınmak "
+          f"için). Ham yanıt: {last_raw[:200]!r}")
+    return {"score": QUALITY_THRESHOLD, "feedback": ""}
 
 
 def revise_script(client, niche, script, feedback):
