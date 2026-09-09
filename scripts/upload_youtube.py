@@ -137,21 +137,23 @@ Başlık: "{title}"
 SADECE JSON dizi formatında yaz, başka hiçbir şey yazma:
 ["#Etiket1", "#Etiket2", "#Etiket3", "#Etiket4", "#Etiket5"]"""
     raw = ""
-    try:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = "".join(b.text for b in response.content if b.type == "text")
-        tags = extract_json_array(raw)
-        if isinstance(tags, list) and len(tags) >= 3:
-            return tags[:5]
-    except Exception as e:
-        print(f"  UYARI: hashtag üretimi başarısız ({type(e).__name__}), "
-              f"sabit yedek hashtag'ler kullanılıyor")
-        if raw:
-            print(f"  Ham model çıktısı: {raw[:300]!r}")
+    for attempt in range(1, 3):
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = "".join(b.text for b in response.content if b.type == "text")
+            tags = extract_json_array(raw)
+            if isinstance(tags, list) and len(tags) >= 3:
+                return tags[:5]
+        except Exception as e:
+            print(f"  UYARI: hashtag üretimi başarısız ({type(e).__name__}, "
+                  f"deneme {attempt}/2)")
+            if raw:
+                print(f"  Ham model çıktısı: {raw[:300]!r}")
+    print("  UYARI: 2 denemede de hashtag üretilemedi, sabit yedek hashtag'ler kullanılıyor")
     return FALLBACK_HASHTAGS
 
 
