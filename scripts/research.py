@@ -178,21 +178,36 @@ def main():
     prompt = load_prompt(topic_hint, used_topics)
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4000,  # web araması ek content bloğu ürettiği için yükseltildi
-        tools=WEB_SEARCH_TOOL,
-        messages=[{"role": "user", "content": prompt}],
-    )
 
-    raw_text = extract_text(response)
+    # generate_titles.py/generate_thumbnail.py/generate_script.py'deki AYNI
+    # mantık: parse hatasında SESSİZCE yapısal olmayan {"raw": ...} objesine
+    # düşmeden önce birkaç kez tekrar dene - facts.json'ın gerçek alanları
+    # (topic, facts vb.) olmadan generate_script.py'ye bozuk/yapısız veri
+    # gidiyordu.
+    data = None
+    last_cleaned = ""
+    for attempt in range(1, 4):
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4000,  # web araması ek content bloğu ürettiği için yükseltildi
+            tools=WEB_SEARCH_TOOL,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw_text = extract_text(response)
+        cleaned = raw_text.replace("```json", "").replace("```", "").strip()
+        last_cleaned = cleaned
+        try:
+            data = json.loads(cleaned)
+            break
+        except json.JSONDecodeError:
+            if attempt < 3:
+                print(f"  UYARI: araştırma sonucu parse edilemedi (deneme "
+                      f"{attempt}/3), tekrar deneniyor...")
 
-    cleaned = raw_text.replace("```json", "").replace("```", "").strip()
-
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError:
-        data = {"raw": cleaned}
+    if data is None:
+        print(f"  UYARI: araştırma sonucu 3 denemede de parse edilemedi, "
+              f"ham metin olarak kaydediliyor. Ham yanıt: {last_cleaned[:200]!r}")
+        data = {"raw": last_cleaned}
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
