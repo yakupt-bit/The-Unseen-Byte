@@ -71,9 +71,9 @@ RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
 # PARSE HATASINDA DOĞRUDAN YEDEĞE DÜŞMEDEN ÖNCE TEKRAR DENE: Gemini'nin JSON
 # formatını bozması genelde geçici bir çıktı hatası (API hatası DEĞİL, o zaten
 # call_gemini içinde ayrı ele alınıyor) - aynı isteği bir kez daha atmak çoğu
-# zaman düzgün JSON döndürüyor. Sadece İKİ deneme de başarısız olursa rastgele
+# zaman düzgün JSON döndürüyor. Sadece ÜÇ deneme de başarısız olursa rastgele
 # yedek başlığa düşülür (bkz. FALLBACK_TITLES).
-MAX_TITLE_PARSE_ATTEMPTS = 2
+MAX_TITLE_PARSE_ATTEMPTS = 3
 
 MAX_TREND_REFERENCES = 8  # prompt'a en fazla kaç kanıtlanmış örnek eklensin
 
