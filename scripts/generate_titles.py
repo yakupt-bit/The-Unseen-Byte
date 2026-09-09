@@ -41,6 +41,7 @@ Kullanım:
 import argparse
 import json
 import os
+import random
 import time
 
 from google import genai
@@ -50,8 +51,29 @@ MODEL_CREATIVE = "gemini-3.6-flash"
 MODEL_UTILITY = "gemini-3.1-flash-lite"
 BRAND_SUFFIX = " | The Unseen Byte"
 
+# generate_thumbnail.py'deki FALLBACK_CONCEPTS ile AYNI mantık: parse
+# hatasında TEK bir sabit string'e düşülürse, art arda başarısız olan
+# koşuların HEPSİ aynı başlığı üretir (birden fazla videoda birebir aynı
+# başlık görülmesinin nedeni buydu). random.choice ile en azından art
+# arda gelen fallback'ler birbirinden farklı olur.
+FALLBACK_TITLES = [
+    "What Really Happened Here",
+    "Nobody Talks About This",
+    "The Part They Left Out",
+    "This Wasn't Supposed To Happen",
+    "The Detail Everyone Missed",
+    "Why This Still Doesn't Add Up",
+]
+
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5  # saniye, üstel: 5, 10, 20, 40
+
+# PARSE HATASINDA DOĞRUDAN YEDEĞE DÜŞMEDEN ÖNCE TEKRAR DENE: Gemini'nin JSON
+# formatını bozması genelde geçici bir çıktı hatası (API hatası DEĞİL, o zaten
+# call_gemini içinde ayrı ele alınıyor) - aynı isteği bir kez daha atmak çoğu
+# zaman düzgün JSON döndürüyor. Sadece İKİ deneme de başarısız olursa rastgele
+# yedek başlığa düşülür (bkz. FALLBACK_TITLES).
+MAX_TITLE_PARSE_ATTEMPTS = 2
 
 MAX_TREND_REFERENCES = 8  # prompt'a en fazla kaç kanıtlanmış örnek eklensin
 
@@ -186,6 +208,32 @@ def format_trend_block(trend_refs: list) -> str:
     )
 
 
+def generate_title_candidates(client, prompt):
+    """Başlık adaylarını üretir; JSON parse başarısız olursa sabit/rastgele
+    bir yedeğe düşmeden ÖNCE aynı isteği bir kez daha dener (bkz.
+    MAX_TITLE_PARSE_ATTEMPTS). Sadece TÜM denemeler başarısız olursa
+    FALLBACK_TITLES'tan rastgele biri kullanılır."""
+    last_raw = ""
+    for attempt in range(1, MAX_TITLE_PARSE_ATTEMPTS + 1):
+        raw = call_gemini(client, prompt, MODEL_CREATIVE, max_tokens=1200)
+        last_raw = raw
+        try:
+            candidates = extract_json_array(raw)
+            if not isinstance(candidates, list) or not candidates:
+                raise ValueError("boş/liste değil")
+            return candidates
+        except (json.JSONDecodeError, ValueError):
+            if attempt < MAX_TITLE_PARSE_ATTEMPTS:
+                print(f"  UYARI: başlık adayları parse edilemedi (deneme "
+                      f"{attempt}/{MAX_TITLE_PARSE_ATTEMPTS}), aynı istek "
+                      f"tekrar deneniyor...")
+
+    print(f"  UYARI: başlık adayları {MAX_TITLE_PARSE_ATTEMPTS} denemede de "
+          f"parse edilemedi, çeşitli yedeklerden biri kullanılıyor. "
+          f"Ham yanıt: {last_raw[:200]!r}")
+    return [random.choice(FALLBACK_TITLES)]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", required=True)
@@ -249,15 +297,7 @@ SCRIPT:
 
 Çıktı SADECE JSON dizi, İngilizce başlıklarla: ["title1", "title2", ...]"""
 
-    raw_candidates = call_gemini(client, gen_prompt, MODEL_CREATIVE, max_tokens=1200)
-    try:
-        candidates = extract_json_array(raw_candidates)
-        if not isinstance(candidates, list) or not candidates:
-            raise ValueError("boş/liste değil")
-    except (json.JSONDecodeError, ValueError):
-        print(f"  UYARI: başlık adayları parse edilemedi, jenerik yedek kullanılıyor. "
-              f"Ham yanıt: {raw_candidates[:200]!r}")
-        candidates = ["What Really Happened Here"]
+    candidates = generate_title_candidates(client, gen_prompt)
 
     rank_prompt = f"""Aşağıdaki İngilizce YouTube başlık adaylarından EN
 GÜÇLÜ tek bir tanesini seç. Kriterler: merak açığı gücü, netlik,
@@ -279,9 +319,9 @@ ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
     try:
         result = extract_json_object(raw_rank)
     except json.JSONDecodeError:
-        print(f"  UYARI: seçim yanıtı parse edilemedi, ilk aday başlık kullanılıyor. "
+        print(f"  UYARI: seçim yanıtı parse edilemedi, adaylardan rastgele biri kullanılıyor. "
               f"Ham yanıt: {raw_rank[:200]!r}")
-        result = {"selected": candidates[0], "reason": "otomatik yedek seçim (parse hatası)"}
+        result = {"selected": random.choice(candidates), "reason": "otomatik yedek seçim (parse hatası)"}
 
     final_title = result["selected"]
     if not final_title.endswith(BRAND_SUFFIX):
