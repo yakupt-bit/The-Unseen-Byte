@@ -82,6 +82,13 @@ MODEL_IMAGE = "gemini-2.5-flash-image"
 MAX_RETRIES = 4
 RETRY_BASE_DELAY = 5
 
+# generate_titles.py'deki AYNI mantık: JSON parse hatasında sabit/rastgele
+# bir yedeğe düşmeden ÖNCE aynı isteği bir kaç kez daha dene - Gemini'nin
+# format hatası yapması genelde geçicidir, sonraki denemelerde çoğunlukla
+# düzgün JSON döner. Sadece TÜM denemeler (3) başarısız olursa
+# FALLBACK_CONCEPTS'e düşülür.
+MAX_CONCEPT_PARSE_ATTEMPTS = 3
+
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 MAX_OWN_THUMBNAILS = 3
@@ -441,16 +448,25 @@ SCRIPT'TEN KISA ALINTI: {script_excerpt[:800]}
 
 Çıktı SADECE JSON: {{"visual_prompt": "...", "hook_text": "...", "use_emphasis_ring": true veya false, "emphasis_target": "..."}}"""
 
-    raw = call_gemini(client, prompt)
-    try:
-        concept = extract_json_object(raw)
-        concept.setdefault("use_emphasis_ring", False)
-        concept.setdefault("emphasis_target", "")
-        return concept
-    except json.JSONDecodeError:
-        print(f"  UYARI: kapak konsepti JSON parse edilemedi, çeşitli "
-              f"yedeklerden biri kullanılıyor. Ham yanıt: {raw[:200]!r}")
-        return random.choice(FALLBACK_CONCEPTS)
+    last_raw = ""
+    for attempt in range(1, MAX_CONCEPT_PARSE_ATTEMPTS + 1):
+        raw = call_gemini(client, prompt)
+        last_raw = raw
+        try:
+            concept = extract_json_object(raw)
+            concept.setdefault("use_emphasis_ring", False)
+            concept.setdefault("emphasis_target", "")
+            return concept
+        except json.JSONDecodeError:
+            if attempt < MAX_CONCEPT_PARSE_ATTEMPTS:
+                print(f"  UYARI: kapak konsepti parse edilemedi (deneme "
+                      f"{attempt}/{MAX_CONCEPT_PARSE_ATTEMPTS}), aynı istek "
+                      f"tekrar deneniyor...")
+
+    print(f"  UYARI: kapak konsepti {MAX_CONCEPT_PARSE_ATTEMPTS} denemede de "
+          f"parse edilemedi, çeşitli yedeklerden biri kullanılıyor. "
+          f"Ham yanıt: {last_raw[:200]!r}")
+    return random.choice(FALLBACK_CONCEPTS)
 
 
 def _extract_gemini_image_bytes(response):
