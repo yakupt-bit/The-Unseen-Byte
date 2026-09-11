@@ -152,7 +152,13 @@ def write_script(client, niche, facts_json, trend_summary="", test_mode=False):
 
 def critique_script(client, niche, script):
     prompt = f"""Aşağıdaki YouTube script'ini şu kriterlere göre değerlendir:
-1. İlk 15 saniye gerçekten yakalayıcı mı?
+1. AÇILIŞ CÜMLESİ + ilk 15 saniye: İLK CÜMLE doğrudan somut, spesifik bir
+   an/sayı/isimle mi açıyor (İYİ), yoksa soyut bir kurulum / genel giriş /
+   klişe bir kalıpla mı ("Imagine...", "Picture this...", "Have you ever
+   wondered...", "In the world of...", "For decades...") başlıyor (KÖTÜ -
+   retention baştan çöker)? Zayıf/soyut/klişe bir açılış varsa bu TEK
+   BAŞINA puanı ciddi düşürsün (en fazla 5) ve feedback'te İLK CÜMLEYİ nasıl
+   somutlaştıracağını açıkça yaz.
 2. Ton doğal mı, yoksa robotik/kurumsal mı? Samimi, konuşma diline
    yakın mı, yoksa "yapay zeka odunu" gibi mi duruyor?
 3. Kaynaklar doğal cümleler içinde mi, yoksa dipnot gibi mi duruyor?
