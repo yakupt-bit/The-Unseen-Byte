@@ -13,12 +13,23 @@ ARAŞTIRMA BULGULARI (JSON):
 {FACTS}
 
 Kurallar:
-- İlk 15 saniye (hook) izleyiciyi anında yakalamalı: bir soru, şaşırtıcı
-  bir iddia veya çelişki ile aç. Asla "Merhaba bugün X hakkında
-  konuşacağız" gibi başlama. Global çapta kanıtlanmış gizem/belgesel
-  formatlarının kullandığı teknikleri kullan: doğrudan izleyiciye hitap
-  et ("Imagine if...", "What you're about to hear..."), retorik sorular
-  sor, gerilim kur (bilgiyi hemen verme, önce merak uyandır sonra açıkla).
+- KRİTİK - AÇILIŞ CÜMLESİ (retention'ın en belirleyici yeri; izleyici
+  ilk 3-5 saniyede kalıp kalmayacağına karar verir): İLK CÜMLE izleyiciyi
+  doğrudan hikâyenin EN SOMUT, EN SPESİFİK anına düşürmeli - gerçek bir
+  an, gerçek bir sayı, gerçek bir isim/olay. Soyut kurulum, tanım,
+  retorik ısınma, "genel giriş" YOK. Şu kalıplarla AÇMA (zayıf, herkesin
+  kullandığı, atlanan açılışlar): "Imagine if...", "Picture this...",
+  "Have you ever wondered...", "In the world of...", "For as long as...",
+  "For decades...", ya da genel bir tarihçe/tanım cümlesi. İlk cümle
+  doğrudan çarpıcı, somut bir gerçekle patlasın.
+  ZAYIF örnek: "Imagine a console that changed everything."
+  GÜÇLÜ örnek: "In nineteen ninety-one, a finished console sat locked in
+  a room at a trade show, and the company that built it pretended it did
+  not exist."
+- İlk 15 saniye (hook) yukarıdaki somut açılıştan sonra gerilimi
+  korumalı: bir soru, şaşırtıcı bir iddia veya çelişki ekle. Asla
+  "Merhaba bugün X hakkında konuşacağız" gibi başlama. Bilgiyi hemen
+  verme - önce merak uyandır, sonra açıkla.
 - Ton: alanında OTORİTER, güvenilir bir uzman/belgesel sunucusu gibi -
   net, kendinden emin, ciddiye alınası. Kurumsal/robotik değil ama
   "meraklı arkadaş" da değil, daha profesyonel ve otoriter bir sunuş.
