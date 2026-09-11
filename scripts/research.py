@@ -62,10 +62,12 @@ SUB_NICHES = [
     "Studio Behind-the-Scenes - internal decisions, crunch culture, and the real production stories behind games",
     "Corporate Strategy - business decisions and rivalries that shaped the gaming industry",
     "Marketing & Launch Secrets - how games are actually marketed, hyped, and sometimes deceptively sold",
-    # --- Hardware & Science Myths (bugün gaming'e AÇIKÇA sabitlendi) ---
-    "Gaming Hardware Engineering Myths - popular beliefs about gaming PCs, consoles, and controllers that are wrong, half-true, or verified by real engineering (must stay tied to gaming/console hardware, not general enterprise tech)",
-    "Gaming Console & PC Thermal Science - the real science behind overheating, throttling, and hardware limits specifically in gaming consoles and gaming PCs (not data centers or general computing)",
-    "Signal & Data Mysteries - how data, networking, and signal processing actually work inside gaming hardware (controllers, online multiplayer, matchmaking servers)",
+    # --- Hardware Secrets & Cover-Ups (belgesel/gizem tonuna sabitlendi:
+    #     'nasıl çalışır' anlatımı / alım rehberi / mit-çürütme DEĞİL,
+    #     SPESİFİK bir tarihsel olay/skandal/örtbas hikayesi) ---
+    "Hardware Cover-Ups - a specific untold historical story where a real gaming console or controller's hidden engineering decision, secret defect, or design flaw was covered up, denied, or only revealed years later. Documentary/mystery tone with a real timeline and named companies - NOT a how-to, buying guide, optimization tutorial, or generic myth-debunking explainer",
+    "The Console That Ran Too Hot - a specific documented case where a real gaming console's overheating or hardware-failure crisis became a hidden corporate scandal or an industry turning point, told as an investigative untold story (the incident, who knew, the cover-up, the aftermath) - NOT a general 'how cooling works' or 'how to fix' explainer",
+    "Hidden Systems Players Never Saw - the secret, undocumented, or deliberately concealed systems inside a specific real game or online service (rigged matchmaking, hidden algorithms, undisclosed data practices) uncovered as an investigative documentary about a real incident - NOT a technical 'how it works' tutorial",
     # --- Esports & Competitive Culture ---
     "Pro Player Psychology - the mental training, burnout, and competitive mindset of professional gamers",
     "Tournament Controversies - cheating scandals and behind-the-scenes esports drama",
@@ -108,8 +110,26 @@ NICHE_ANCHOR_INSTRUCTION = (
 )
 
 
+# Belgesel/gizem tonuna en güvenilir uyan, niche_check'ten geçmesi en olası
+# alt-niş indeksleri. 'Hardware Secrets & Cover-Ups' kümesi (indeks 9-11)
+# yeniden denemelerde BİLEREK dışarıda bırakıldı: bu küme niche_check
+# tarafından geçmişte sık sık 'tüketici rehberi/how-to' diye reddedildiği
+# için, ilk deneme buraya düşse bile kalan denemeler bu tuzağa tekrar
+# takılıp 5 hakkı boşa harcamasın.
+SAFE_SUB_NICHE_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15, 16, 17]
+
+
 def pick_sub_niche(used_topics_count: int, retry_offset: int = 0) -> str:
-    idx = (used_topics_count + retry_offset) % len(SUB_NICHES)
+    # İlk deneme (retry_offset <= 0) tüm alt-nişler üzerinde normal
+    # rotasyonu kullanır. Niş kontrolü başarısız olup YENİDEN denendiğinde
+    # (retry_offset >= 1), riskli 'Hardware Secrets & Cover-Ups' kümesine
+    # tekrar takılmamak için SADECE güvenli alt-nişlerden seçilir - böylece
+    # 5 denemenin hepsi aynı reddedilen kümeye harcanmaz.
+    if retry_offset <= 0:
+        idx = used_topics_count % len(SUB_NICHES)
+        return SUB_NICHES[idx]
+    safe = SAFE_SUB_NICHE_INDICES
+    idx = safe[(used_topics_count + retry_offset) % len(safe)]
     return SUB_NICHES[idx]
 
 
