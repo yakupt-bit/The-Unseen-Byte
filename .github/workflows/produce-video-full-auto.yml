@@ -475,7 +475,35 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p assets/scene_library
-          git add used_topics.json used_comments.json used_titles.json assets/scene_library/
-          git diff --staged --quiet && echo "Değişiklik yok" || git commit -m "Update used topics history and scene image library"
-          git pull --rebase origin main || true
-          git push
+          # Sadece VAR OLAN dosyaları ekle - eksik bir dosya tüm adımı düşürmesin
+          for f in used_topics.json used_comments.json used_titles.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git add assets/scene_library/ 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "Değişiklik yok, commit gerekmiyor."
+            exit 0
+          fi
+          git commit -m "Update used topics history and scene image library"
+          # main, uzun koşu sırasında ilerlemiş olabilir. Geçici bir push
+          # çakışması TÜM adımı düşürmesin diye fetch+rebase ile birkaç kez dene.
+          pushed=0
+          for i in 1 2 3 4 5; do
+            git fetch origin main || true
+            if git rebase origin/main; then
+              if git push origin HEAD:main; then
+                echo "Geçmiş push edildi (deneme $i)."
+                pushed=1
+                break
+              fi
+            else
+              git rebase --abort 2>/dev/null || true
+            fi
+            echo "Push çakışması, yeniden deneniyor ($i/5)..."
+            sleep $(( (RANDOM % 5) + 3 ))
+          done
+          if [ "$pushed" -ne 1 ]; then
+            echo "UYARI: gecmis bu kosuda push edilemedi (main mesgul). Video zaten"
+            echo "yuklendi; tekrar-engeli gecmisi bir sonraki basarili kosuda guncellenir."
+          fi
+          exit 0
