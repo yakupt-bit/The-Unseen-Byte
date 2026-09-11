@@ -430,13 +430,28 @@ SCRIPT'TEN KISA ALINTI: {script_excerpt[:800]}
    jenerik/kurgusal figürler olsun, gerçek bir kişi/ünlü OLMASIN. Konu
    saf teknik/nesne odaklıysa (insan draması yoksa) yine nesne-odaklı
    yakın çekim formatını tercih et - insan figürü ZORUNLU değil, sadece
-   hikayeyi güçlendiriyorsa kullan. Sahnede HİÇBİR yazı/tabela/etiket
-   OLMASIN.
-2. "hook_text": İngilizce, TÜM BÜYÜK HARF, 2 İLA 6 KELİME ARASI (kesin
-   2-3 kelime şartı YOK artık), 1-3 satıra bölünebilir, başlığın
-   merakını yansıtan, iddialı ama tamamen soyut olmayan bir ifade.
-   HER SEFERİNDE FARKLI VE ÖZGÜN - "NEVER EXPLAINED" gibi tek bir
-   kalıba saplanma.
+   hikayeyi güçlendiriyorsa kullan. Karanlık/negatif alan BOŞ durmasın:
+   daha loş bölgede küçük İKİNCİL bir ilgi noktası olsun (hafif bir
+   parıltı, yanan bir gösterge ışığı, yarı görünen gizemli bir nesne) -
+   göz önce ana odağa, sonra bu ikincil detaya gitsin. Sahnede HİÇBİR
+   yazı/tabela/etiket OLMASIN.
+2. "hook_text": İngilizce, TÜM BÜYÜK HARF, 2 İLA 6 KELİME ARASI, 1-3
+   satıra bölünebilir. ZORUNLU KURALLAR:
+   - KONUYA ÖZGÜ: bu videonun SOMUT öznesine (başlık + script
+     alıntısındaki asıl konu/nesne/olay) doğrudan değinmeli. Başka
+     herhangi bir videoya da yapışabilecek GENEL bir gizem cümlesi
+     OLMAMALI.
+   - SPOILER YOK: videonun cevabını/sonucunu/reveal'ini AÇIKLAMA.
+     Merakı kur ama çözümü verme (ör. bir şeyin yanlış/yalan olduğunu
+     ima et, ama GERÇEĞİN NE OLDUĞUNU söyleme).
+   - YASAK KLİŞELER (bunları ASLA kullanma): "WHAT REALLY HAPPENED
+     HERE", "THE TRUTH BEHIND IT", "THE TRUTH ABOUT THIS", "NEVER
+     EXPLAINED", "YOU WON'T BELIEVE", "THE REAL STORY". Hepsi aşırı
+     genel, konuyu ele vermiyor.
+   - STİL ÖRNEKLERİ (SADECE ton için, birebir kopyalama): konu konsol
+     bit pazarlamasıysa "THE BITS WERE A LIE"; iptal edilmiş donanımsa
+     "IT SHIPPED TO NOBODY". Sen bu videonun KENDİ konusuna göre özgün
+     bir tane yaz.
 3. "use_emphasis_ring": true/false - bu SAHNE için kırmızı bir vurgu
    halkası GERÇEKTEN faydalı mı (net, tek bir küçük detayı işaret
    etmek gerekiyorsa true) yoksa geniş atmosferik sahnede gereksiz/
