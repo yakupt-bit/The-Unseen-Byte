@@ -68,6 +68,7 @@ import argparse
 import json
 import os
 import random
+import re
 import textwrap
 import time
 
@@ -367,6 +368,29 @@ def load_trend_titles(trends_path: str) -> list:
         return []
 
 
+def _fallback_hook_from_title(title: str) -> str:
+    """Kapak konsepti üretimi yedeğe düştüğünde bile SABİT klişe hook
+    ("THE TRUTH BEHIND IT" gibi) tekrar edilmesin diye, hook'u o videonun
+    KENDİ başlığından türetir - böylece her yedek kapak konuya özgü ve
+    birbirinden farklı kalır. En vurucu kısım genelde başlığın SON kısa
+    cümlesidir ("They Chose Not To.", "It Wasn't."); yoksa son 6 kelimeye
+    inilir. Marka son eki ("| The Unseen Byte") atılır."""
+    base = title.split("|")[0].strip()
+    parts = [p.strip() for p in re.split(r"[.!?]", base) if p.strip()]
+    chosen = ""
+    for p in reversed(parts):  # sondan başla - vurucu kapanış cümlesi
+        if 2 <= len(p.split()) <= 6:
+            chosen = p
+            break
+    if not chosen:
+        chosen = parts[-1] if parts else base
+    words = chosen.split()
+    if len(words) > 6:
+        words = words[-6:]  # kuyruk genelde asıl "payload"dır
+    hook = " ".join(words).upper().strip(" ,;:-\"'")
+    return hook or "THE PART THEY LEFT OUT"
+
+
 def generate_thumbnail_concept(client, title: str, script_excerpt: str,
                                 trend_titles: list, style_summary: str = None,
                                 avoid_motifs: list = None) -> dict:
@@ -479,9 +503,14 @@ SCRIPT'TEN KISA ALINTI: {script_excerpt[:800]}
                       f"tekrar deneniyor...")
 
     print(f"  UYARI: kapak konsepti {MAX_CONCEPT_PARSE_ATTEMPTS} denemede de "
-          f"parse edilemedi, çeşitli yedeklerden biri kullanılıyor. "
-          f"Ham yanıt: {last_raw[:200]!r}")
-    return random.choice(FALLBACK_CONCEPTS)
+          f"parse edilemedi, yedek SAHNE + BAŞLIKTAN türetilen hook "
+          f"kullanılıyor. Ham yanıt: {last_raw[:200]!r}")
+    # Yedek görsel sahnesini kullan ama hook'u SABİT klişe yerine başlığa
+    # özgü olacak şekilde türet - böylece art arda yedekler aynı 3 klişeyi
+    # tekrar etmez (kanalda görülen kapak tekrarının asıl sebebi buydu).
+    concept = dict(random.choice(FALLBACK_CONCEPTS))  # sabiti mutasyona uğratma
+    concept["hook_text"] = _fallback_hook_from_title(title)
+    return concept
 
 
 def _extract_gemini_image_bytes(response):
