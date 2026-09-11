@@ -63,7 +63,7 @@ XFADE_DURATION = 0.6
 FONT_PATH = "assets/fonts/Anton-Regular.ttf"
 LOGO_PATH = "assets/branding/logo.png"
 SENTENCES_PER_SCENE = 2  # generate_scenes.py ile aynı olmalı
-MAX_SCENES = 90  # generate_scenes.py ile aynı olmalı
+MAX_SCENES = 120  # generate_scenes.py ile aynı olmalı
 
 # --- İlk 30 saniye yoğun tempo ayarları ---
 INTRO_SECONDS = 30  # bu süre içinde hızlı geçiş uygulanacak
