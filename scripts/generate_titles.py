@@ -316,7 +316,16 @@ def main():
 ÖNEMLİ: Başlıkların TAMAMI İNGİLİZCE olmalı, tek bir Türkçe kelime bile
 kullanma - kanal İngilizce ve global bir kitleye hitap ediyor.
 
-TON: AGRESİF ve İDDİALI ol. Yumuşak, nazik, genel-geçer ifadelerden
+KRİTİK - İÇERİĞE SADAKAT (HER ŞEYDEN ÖNCE GELİR): Her başlık, script'in
+GERÇEKTEN anlattığı ana konuyu/iddiayı doğru yansıtmak ZORUNDA. Script'te
+OLMAYAN bir kavram, konu ya da çerçeve UYDURMA. Örnek: script bir donanım
+arızası/tasarım kusuru hakkındaysa, başlık bunu "hacking", "güvenlik",
+"unhackable", "kod/yazılım" gibi ALAKASIZ bir çerçeveye ÇEKEMEZ. Başlık
+merak açığı taşısın ama SADECE script'in gerçek konusundan doğsun -
+çarpıcılık uğruna konuyu SAPTIRMAK yalandır, güveni ve retention'ı öldürür.
+
+TON: AGRESİF ve İDDİALI ol (ama YUKARIDAKİ SADAKAT sınırının İÇİNDE).
+Yumuşak, nazik, genel-geçer ifadelerden
 KAÇIN. Her başlık okuyanı DURDURMALI - doğrudan, çarpıcı, biraz
 küstah bir özgüvenle yazılmış olsun (ör. "nobody talks about this",
 "they don't want you to know", "everyone got this wrong"). Klişe
@@ -348,7 +357,17 @@ SCRIPT:
     candidates = generate_title_candidates(client, gen_prompt)
 
     rank_prompt = f"""Aşağıdaki İngilizce YouTube başlık adaylarından EN
-GÜÇLÜ tek bir tanesini seç. Kriterler: merak açığı gücü, netlik,
+GÜÇLÜ tek bir tanesini seç.
+
+ÖNCE SADAKAT FİLTRESİ (bu HER ŞEYİ - formülü, çarpıcılığı, trend
+benzerliğini - GEÇERSİZ KILAR): Bir aday script'in gerçek konusuyla
+ÇELİŞİYORSA ya da script'te OLMAYAN bir iddia/çerçeve içeriyorsa (ör.
+konu bir donanım kusuru/arıza iken başlık "hacking / security /
+unhackable / kod / yazılım" diyorsa) o adayı ELE - ne kadar çarpıcı
+olursa olsun ASLA SEÇME. Yalnızca script'in gerçek konusuna SADIK
+adaylar arasından devam et.
+
+Kalan adaylar için kriterler: merak açığı gücü, netlik,
 özgünlük hissi, AGRESİFLİK/iddialılık (yumuşak/genel ifadeler DÜŞÜK
 puan almalı), tık tuzağı olmaması.
 {trend_block}
@@ -362,8 +381,10 @@ BU VİDEO İÇİN TERCİH EDİLEN FORMÜL (rotasyon): [{preferred_formula['name'
 {preferred_formula['desc']}
 Yaklaşık EŞİT güçteki adaylar arasında BU formüle uyan adayı seç -
 böylece yayınlanan başlıklar videolar arası çeşitlenir. Ama SADECE formül
-uysun diye zayıf/tık-tuzağı bir başlık seçme; merak açığı gücü her zaman
-önce gelir.
+uysun diye zayıf/tık-tuzağı bir başlık seçme; ve SADAKAT her zaman formülün
+de önünde gelir - sadık ama farklı formülde bir başlık, formüle uyan ama
+konuyu saptıran bir başlığa DAİMA tercih edilir. Merak açığı gücü de
+sadakatten sonra gelir.
 
 ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 
