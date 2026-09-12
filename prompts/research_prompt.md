@@ -29,4 +29,13 @@ Kaçınmanı istediklerim:
 ÖNEMLİ: "topic" alanı SADECE kategori adı olmasın (örn. "Gaming
 Psychology" YETERSİZ), bu videonun SPESİFİK hikayesini/açısını kısaca
 özetleyen bir cümle olsun (örn. "ESRB rating system relies on publisher-submitted footage, not actual gameplay"). Bu alan, gelecekte
-aynı konunun tekrar seçilmemesi için kullanılıyor.
+aynı konunun tekrar seçilmemesi için kullanılıyor. "topic" alanını ASLA
+boş bırakma - her zaman spesifik, dolu bir cümle yaz.
+
+KRİTİK - EN MEŞHUR ÖRNEKTEN KAÇIN: Bir niş verildiğinde, o nişin
+HERKESİN BİLDİĞİ, en aşikâr, en çok anlatılmış örneğini SEÇME. Örnek:
+"donanım örtbası/kusuru" nişinde Xbox 360 "Red Ring of Death" gibi
+klişeleşmiş, defalarca işlenmiş konulara GİTME. Bunun yerine daha AZ
+BİLİNEN, özgün, şaşırtıcı bir hikaye bul - izleyici "bunu hiç
+duymamıştım" desin. Yukarıdaki "daha önce işlenmiş konular" listesindeki
+hiçbir konuyla da aynı olayı anlatma.
