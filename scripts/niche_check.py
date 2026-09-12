@@ -66,6 +66,11 @@ def load_used_topics() -> list:
         return []
 
 
+def save_used_topics(topics: list):
+    with open(USED_TOPICS_FILE, "w", encoding="utf-8") as f:
+        json.dump(topics, f, ensure_ascii=False, indent=2)
+
+
 def extract_title(titles_data) -> str:
     """generate_titles.py'nin gerçek çıktı formatı: {"selected": ["...", ...]}.
     Eski kod yanlış anahtar isimleri arıyordu ve hep boşa düşüyordu -
@@ -206,6 +211,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", required=True, help="script.md yolu")
     parser.add_argument("--titles", required=True, help="titles.json yolu")
+    parser.add_argument("--facts", default="facts.json",
+                        help="facts.json yolu (onaylanan konuyu kaydetmek için)")
     args = parser.parse_args()
 
     niche = load_text("prompts/niche.md")
@@ -243,6 +250,29 @@ def main():
         sys.exit(1)
 
     print(f"✅ Tekrar değil (güven: {dup_result.get('confidence', '?')}/10), devam ediliyor.")
+
+    # 3) GEÇTİ - konuyu ŞİMDİ (onaylandıktan SONRA) kalıcı kaydet.
+    # Kayıt BİLEREK burada yapılır (research.py'de DEĞİL):
+    #   - Sadece gerçekten üretilen/onaylanan videolar kaydedilir
+    #     (başarısız retry denemeleri listeyi kirletmez).
+    #   - Tekrar kontrolü kendini kendine karşılaştırmaz (bu kontrolde
+    #     used_topics henüz bu videoyu İÇERMİYOR).
+    #   - Konu HER ZAMAN kaydedilir: facts.json'daki "topic" boşsa bile
+    #     başlıktan türetilir. Böylece kayıt ASLA atlanmaz ve aynı konu
+    #     ikinci kez üretilirse bir sonraki koşuda buradan yakalanır.
+    topic_to_record = ""
+    try:
+        with open(args.facts, "r", encoding="utf-8") as f:
+            fdata = json.load(f)
+        topic_to_record = (fdata.get("topic") or "").strip()
+    except Exception:
+        pass
+    if not topic_to_record:
+        topic_to_record = title.split("|")[0].strip()  # marka son ekini at
+    used_topics.append(topic_to_record)
+    save_used_topics(used_topics)
+    print(f"Konu kalıcı kaydedildi (tekrar önleme): {topic_to_record[:90]}")
+
     sys.exit(0)
 
 
