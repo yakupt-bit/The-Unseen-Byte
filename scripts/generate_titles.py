@@ -234,6 +234,56 @@ def generate_title_candidates(client, prompt):
     return [random.choice(FALLBACK_TITLES)]
 
 
+# --- Başlık FORMÜLLERİ (Operatör Oyun Kitabı Bölüm 6) --------------------
+# 7 kanıtlanmış merak-açığı formülü. Adaylar bunlara yayılır; SEÇİLEN
+# başlık ise rotasyonla farklı bir formülü öne çıkarır ki videolar arası
+# yayınlanan başlıklar aynı kalıba saplanmasın. Örnekler SADECE ton/biçim
+# içindir - model konuya göre özgün üretir.
+TITLE_FORMULAS = [
+    {"name": "cover_up",
+     "desc": "Gizli gerçek / örtbas: bir olayın kimsenin konuşmadığı yüzü. "
+             "Örn stil: 'The Console Defect They Hid for Years'."},
+    {"name": "question",
+     "desc": "Cevap isteyen soru: merak edilen net bir soru. "
+             "Örn stil: 'Why Does Your Controller Slowly Drift?'."},
+    {"name": "how_huge",
+     "desc": "'Nasıl' + devasa/imkânsız görünen iddia. "
+             "Örn stil: 'How One Studio Hid a Loading Screen in Plain Sight'."},
+    {"name": "unexpected_number",
+     "desc": "Beklenmedik sayı + bağlam. "
+             "Örn stil: 'This One Bug Cost Them 300 Million Dollars'."},
+    {"name": "two_paths",
+     "desc": "İki yol / kontrast: biri X yaptı, biri Y; sonuç farklı. "
+             "Örn stil: 'Same Chip, Two Consoles - One Survived'."},
+    {"name": "number_time",
+     "desc": "Küçük eylem/karar -> uzun vadeli sonuç (zaman ufku). "
+             "Örn stil: 'One Line of Code, Broken 12 Years Later'."},
+    {"name": "status_curiosity",
+     "desc": "Bir ikon/statü göstergesinin arkasındaki gerçek. "
+             "Örn stil: 'The Truth Behind Gaming's Most Trusted Number'."},
+]
+
+
+def format_title_formulas_block() -> str:
+    lines = [f"{i+1}. [{f['name']}] {f['desc']}"
+             for i, f in enumerate(TITLE_FORMULAS)]
+    return "\n".join(lines)
+
+
+def pick_title_formula(index: int) -> dict:
+    return TITLE_FORMULAS[index % len(TITLE_FORMULAS)]
+
+
+def load_used_topics_count() -> int:
+    # Rotasyon indeksi: işlenmiş konu sayısı (research.py bu koşuda
+    # günceller). Yoksa rastgele bir formülle başla.
+    try:
+        with open("used_topics.json", "r", encoding="utf-8") as f:
+            return len(json.load(f))
+    except Exception:
+        return random.randint(0, len(TITLE_FORMULAS) - 1)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", required=True)
@@ -256,6 +306,10 @@ def main():
     used_titles_block = format_used_titles_block(used_titles)
     print(f"  Geçmiş başlık sayısı (şablon tekrarı kontrolü için): {len(used_titles)}")
 
+    formula_block = format_title_formulas_block()
+    preferred_formula = pick_title_formula(load_used_topics_count())
+    print(f"  Tercih edilen başlık formülü (rotasyon): {preferred_formula['name']}")
+
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     gen_prompt = f"""Bu script için 8 farklı YouTube başlığı öner.
@@ -277,18 +331,12 @@ CEVABINI VERMEZ, sadece konunun BAĞLAMINI/GELİŞMESİNİ ekler - somut
 bir çelişki, rakam veya anomali içerir. Asıl cevap/sonuç SADECE
 videoyu izleyince ortaya çıkmalı.
 
-CÜMLE YAPISI ÇEŞİTLİLİĞİ ZORUNLU: 8 adayın HER BİRİ FARKLI bir gramatik
-yapı kullanmalı - aynı iskeleti ("One [X] Changed Everything" gibi)
-birden fazla adayda TEKRARLAMA. Global çapta kanıtlanmış gizem/belgesel
-kanallarından çıkarılan FARKLI kalıpları kullan:
-1. Soru formatı ("Is X Really Y?", "Why Does X Happen?")
-2. "Ne oldu" gizem çerçevesi ("What Really Happened to X")
-3. Güçlü iddia + merak açığı ("The Real Reason X Never Y")
-4. Sayı/liste formatı ("X Things You Didn't Know About Y")
-5. Doğrudan izleyiciye hitap eden meydan okuma tarzı
-6. İtiraf/açığa çıkarma tarzı ("Nobody Tells You X")
-7. Zıtlık/çelişki vurgusu ("X Looked Y. It Wasn't.")
-8. Zaman baskısı/aciliyet tarzı ("For Years, X Hid This")
+CÜMLE YAPISI ÇEŞİTLİLİĞİ ZORUNLU: 8 adayın HER BİRİ FARKLI bir formül/
+gramatik yapı kullanmalı - aynı iskeleti ("One [X] Changed Everything"
+gibi) birden fazla adayda TEKRARLAMA. Kanıtlanmış 7 başlık formülünü
+(adayları bunlara YAY; her aday farklı bir formülden gelsin, formül adını
+çıktıya YAZMA):
+{formula_block}
 {trend_block}
 {used_titles_block}
 
@@ -309,6 +357,13 @@ Yukarıdaki kanıtlanmış (gerçek izlenme verili) başlıklarla yapısal
 benzerlik taşıyan adaylara hafif öncelik ver - ama DAHA ÖNCE
 KULLANILMIŞ ŞABLONLARLA aynı cümle iskeletini taşıyan bir aday varsa
 o adayı SEÇME, diğer adayları tercih et.
+
+BU VİDEO İÇİN TERCİH EDİLEN FORMÜL (rotasyon): [{preferred_formula['name']}]
+{preferred_formula['desc']}
+Yaklaşık EŞİT güçteki adaylar arasında BU formüle uyan adayı seç -
+böylece yayınlanan başlıklar videolar arası çeşitlenir. Ama SADECE formül
+uysun diye zayıf/tık-tuzağı bir başlık seçme; merak açığı gücü her zaman
+önce gelir.
 
 ADAYLAR: {json.dumps(candidates, ensure_ascii=False)}
 
