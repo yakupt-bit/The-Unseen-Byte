@@ -30,6 +30,20 @@ Kurallar:
   korumalı: bir soru, şaşırtıcı bir iddia veya çelişki ekle. Asla
   "Merhaba bugün X hakkında konuşacağız" gibi başlama. Bilgiyi hemen
   verme - önce merak uyandır, sonra açıkla.
+- KRİTİK - AÇILIŞIN İLK 30 SANİYESİ, SANİYE SANİYE İSKELET (bu 5 ritmi
+  bu SIRAYLA kur; videonun kaderi bu 30 saniyede belli olur):
+  * 0-3 sn — SOMUT COLD-OPEN: bir an/mekân/olay. (Yukarıdaki açılış
+    cümlesi kuralı.) Spesifik patla, ısınma yok.
+  * 3-8 sn — ÖDÜL VAADİ (stakes): izleyici sona kalırsa öğreneceği BÜYÜK
+    cevabı İŞARET ET ama VERME (ör. "...and years later, only one of
+    these companies admitted what really happened. Here is why.").
+  * 8-15 sn — İLK MİNİ-ÖDÜL: küçük ama şaşırtıcı bir sayı/bağlantı/
+    çelişki bırak ki merak SOMUTLAŞSIN. Boş vaat değil, ilk gerçek kanca.
+  * 15-25 sn — YOLCULUĞU KUR: izleyiciye ne göreceğini net çiz (ama
+    sonucu DEĞİL). "İzlemeye değer" desin; yolu göster, cevabı sakla.
+  * 25-30 sn — İLK KÖPRÜ: devama iten geçiş cümlesi ("but the part
+    almost no one talks about is..."). Buradan sonra her 2-2.5 dakikada
+    bir mini-reveal ritmi başlar (aşağıdaki periyodik ödül kuralı).
 - Ton: alanında OTORİTER, güvenilir bir uzman/belgesel sunucusu gibi -
   net, kendinden emin, ciddiye alınası. Kurumsal/robotik değil ama
   "meraklı arkadaş" da değil, daha profesyonel ve otoriter bir sunuş.
