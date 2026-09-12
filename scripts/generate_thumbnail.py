@@ -368,6 +368,97 @@ def load_trend_titles(trends_path: str) -> list:
         return []
 
 
+# --- Kapak FORMÜL ROTASYONU (Operatör Oyun Kitabı Bölüm 7) ---------------
+# Her videoda kompozisyon formülünü döndürerek CTR'yi artırmak ve
+# "hepsi aynı görünüyor" şablon hissini kırmak için. Renk kimliği (karanlık
+# sinematik) ve bilgilendirici metin yönü SABİT kalır; DEĞİŞEN kompozisyon
+# tipi ve metin biçimidir. Rotasyon used_topics.json sayısına göre yapılır,
+# yani art arda videolar farklı formül kullanır.
+THUMBNAIL_FORMULAS = [
+    {
+        "name": "documentary_mystery",
+        "label": "Belgesel/gizem (kanal kimliği)",
+        "guidance": (
+            "BU KAPAK İÇİN FORMÜL: BELGESEL/GİZEM. Kanalın ana kimliği: "
+            "geniş, atmosferik, TEK güçlü ışık kaynaklı, yüksek kontrastlı, "
+            "net odaklı karanlık sahne. hook_text konuya özel 2-6 kelime."
+        ),
+    },
+    {
+        "name": "big_number",
+        "label": "Tek büyük sayı",
+        "guidance": (
+            "BU KAPAK İÇİN FORMÜL: TEK BÜYÜK SAYI. Sahneyi hikâyedeki "
+            "ÇARPICI TEK bir sayının (bir yıl, bir adet, bir tutar, bir "
+            "süre) etrafında kur; sahne o sayıyı desteklesin ve sayının "
+            "BÜYÜK basılabilmesi için daha sade/loş bir alan bırak. "
+            "hook_text DOĞRUDAN o sayı ya da sayı+tek kelime olsun "
+            "(ör. '1998', 'ZERO TESTS', '3 SECONDS'). Yine karanlık "
+            "sinematik ton; düz/yakın çekim değil, bağlamlı sahne."
+        ),
+    },
+    {
+        "name": "contrast_pair",
+        "label": "Kontrast çifti (kim/hangisi)",
+        "guidance": (
+            "BU KAPAK İÇİN FORMÜL: KONTRAST ÇİFTİ. Yan yana iki özne/iki "
+            "yol - 'hangisi / kim kazanır' hissi (ör. biri soğuk mavi, "
+            "diğeri sıcak kırmızı ışıkta). Kompozisyon sol-sağ bölünsün, "
+            "yine karanlık sinematik. hook_text iki tarafı çerçeveleyen "
+            "kısa bir ifade."
+        ),
+    },
+    {
+        "name": "before_after",
+        "label": "Önce/Sonra kontrastı",
+        "guidance": (
+            "BU KAPAK İÇİN FORMÜL: ÖNCE/SONRA. Geniş, atmosferik tek bir "
+            "kare içinde net bir 'önce vs sonra' kontrastı kur - aynı "
+            "nesne/mekân bir yanda sağlam/normal, diğer yanda bozulmuş/"
+            "başarısız/değişmiş halde (ya da soldan sağa bir dönüşüm). "
+            "Karanlık sinematik ton korunsun. hook_text bu dönüşümü ima "
+            "eden 2-4 kelime."
+        ),
+    },
+    {
+        "name": "arrow_detail",
+        "label": "İşaret + gizli detay",
+        "guidance": (
+            "BU KAPAK İÇİN FORMÜL: İŞARET + GİZLİ DETAY. Geniş atmosferik "
+            "sahnede TEK bir şüpheli/ele veren küçük detay olsun ve o detay "
+            "ışık/parıltıyla vurgulanıp 'buraya bak' desin; etrafında temiz "
+            "alan bırak. hook_text 2-4 kelime; asıl işi detay yapıyor. "
+            "MÜMKÜNSE use_emphasis_ring=true ve emphasis_target = o detay."
+        ),
+    },
+    {
+        "name": "single_focus",
+        "label": "Tek odak + tek duygu",
+        "guidance": (
+            "BU KAPAK İÇİN FORMÜL: TEK ODAK + TEK DUYGU. Tek net bir odak "
+            "(bir nesne ya da güçlü TEK bir duygu -dehşet, inanamama- "
+            "gösteren jenerik/kurgusal bir figür), daha sade karanlık bir "
+            "arka planda. Göz anında o tek odağa gitsin. hook_text 2-4 "
+            "kelimelik vurucu."
+        ),
+    },
+]
+
+
+def pick_thumbnail_formula(index: int) -> dict:
+    return THUMBNAIL_FORMULAS[index % len(THUMBNAIL_FORMULAS)]
+
+
+def load_used_topics_count() -> int:
+    # Rotasyon indeksi: işlenmiş konu sayısı (content-bundle'dan gelen
+    # used_topics.json). Yoksa rastgele bir formülle başla.
+    try:
+        with open("used_topics.json", "r", encoding="utf-8") as f:
+            return len(json.load(f))
+    except Exception:
+        return random.randint(0, len(THUMBNAIL_FORMULAS) - 1)
+
+
 def _fallback_hook_from_title(title: str) -> str:
     """Kapak konsepti üretimi yedeğe düştüğünde bile SABİT klişe hook
     ("THE TRUTH BEHIND IT" gibi) tekrar edilmesin diye, hook'u o videonun
@@ -393,7 +484,7 @@ def _fallback_hook_from_title(title: str) -> str:
 
 def generate_thumbnail_concept(client, title: str, script_excerpt: str,
                                 trend_titles: list, style_summary: str = None,
-                                avoid_motifs: list = None) -> dict:
+                                avoid_motifs: list = None, formula: dict = None) -> dict:
     trend_block = ""
     if trend_titles:
         trend_block = (
@@ -419,6 +510,13 @@ def generate_thumbnail_concept(client, title: str, script_excerpt: str,
             + "\n".join(f"- KAÇIN: {m}" for m in avoid_motifs)
         )
 
+    formula_block = ""
+    if formula:
+        formula_block = (
+            "\n\n=== BU KOŞUNUN KAPAK FORMÜLÜ (rotasyonla seçildi, buna "
+            "UY) ===\n" + formula["guidance"]
+        )
+
     prompt = f"""Bir YouTube kapak görseli (thumbnail) konsepti üret.
 
 ÖNEMLİ BAĞLAM - GERÇEK PERFORMANS VERİSİ: Bu kanalda yakın zamanda
@@ -442,6 +540,7 @@ SCRIPT'TEN KISA ALINTI: {script_excerpt[:800]}
 {trend_block}
 {style_block}
 {avoid_block}
+{formula_block}
 
 Üret:
 1. "visual_prompt": İngilizce, GENİŞ VE ATMOSFERİK bir SAHNE tarifi -
@@ -790,8 +889,11 @@ def main():
     else:
         print("  YT OAuth bilgisi yok, kendi kapak çeşitliliği kontrolü atlanıyor")
 
+    formula = pick_thumbnail_formula(load_used_topics_count())
+    print(f"  Kapak formülü (rotasyon): {formula['label']}")
+
     concept = generate_thumbnail_concept(client, title, script_excerpt, trend_titles,
-                                          style_summary, avoid_motifs)
+                                          style_summary, avoid_motifs, formula=formula)
 
     raw_path = os.path.join(args.out_dir, "raw_1.png")
     generate_background(client, concept["visual_prompt"], raw_path)
