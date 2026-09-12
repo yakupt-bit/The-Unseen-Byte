@@ -232,11 +232,13 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    new_topic = data.get("topic", "").strip()
-    if new_topic:
-        used_topics.append(new_topic)
-        save_used_topics(used_topics)
-        print(f"Yeni konu listeye eklendi: {new_topic}")
+    # NOT: Konu kaydı BİLEREK buradan kaldırıldı. Eskiden burada
+    # data["topic"] doluysa used_topics'e ekleniyordu - ama (1) bu alan
+    # bazen boş geliyor ve konu HİÇ kaydedilmiyordu (aynı konu tekrar
+    # üretilebiliyordu), (2) kayıt niche_check'ten ÖNCE olduğu için tekrar
+    # kontrolü kendini kendine karşılaştırıyordu. Artık konu, niche_check.py
+    # içinde, tekrar/niş kontrolünü GEÇTİKTEN sonra ve HER ZAMAN (boşsa
+    # başlıktan türetilerek) kaydediliyor.
 
     print(f"Araştırma tamamlandı -> {args.out}")
 
