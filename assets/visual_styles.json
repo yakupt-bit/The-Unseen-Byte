@@ -1,0 +1,54 @@
+{
+  "styles": [
+    {
+      "id": "documentary_35mm",
+      "name": "35mm Belgesel",
+      "prompt_suffix": "35mm film grain, documentary style, muted colors, vintage aesthetic, high contrast",
+      "category": "history"
+    },
+    {
+      "id": "cinematic_golden",
+      "name": "Sinematik Altın Saat",
+      "prompt_suffix": "cinematic lighting, golden hour, shallow depth of field, professional photography, warm tones",
+      "category": "general"
+    },
+    {
+      "id": "dark_mystery",
+      "name": "Karanlık Gizem",
+      "prompt_suffix": "dark moody atmosphere, high contrast, single light source, mysterious, film noir style",
+      "category": "mystery"
+    },
+    {
+      "id": "clean_motion",
+      "name": "Temiz Motion Graphics",
+      "prompt_suffix": "clean minimalist design, motion graphics style, bright colors, modern, infographic aesthetic",
+      "category": "tech"
+    },
+    {
+      "id": "realistic_3d",
+      "name": "Gerçekçi 3D Render",
+      "prompt_suffix": "photorealistic 3D render, Unreal Engine 5, detailed textures, dramatic lighting, hyperrealistic",
+      "category": "engineering"
+    },
+    {
+      "id": "black_white_noir",
+      "name": "Siyah-Beyaz Noir",
+      "prompt_suffix": "black and white, film noir, high contrast, dramatic shadows, 1940s aesthetic, grainy texture",
+      "category": "war"
+    },
+    {
+      "id": "vintage_archive",
+      "name": "Arşiv Dokusu",
+      "prompt_suffix": "vintage archive photo, aged paper texture, sepia tones, historical document feel, worn edges",
+      "category": "history"
+    },
+    {
+      "id": "futuristic_tech",
+      "name": "Fütüristik Teknoloji",
+      "prompt_suffix": "futuristic technology, neon lights, cyberpunk aesthetic, blue and purple tones, digital art",
+      "category": "ai"
+    }
+  ],
+  "rotation_strategy": "random",
+  "last_used_index": -1
+}
