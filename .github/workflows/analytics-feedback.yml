@@ -1,0 +1,30 @@
+name: Analytics Feedback Loop (48h Post-Upload)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "YouTube Video ID (örn: dQw4w9WgXcQ)"
+        required: true
+      script_file:
+        description: "İlgili script dosyası yolu (opsiyonel)"
+        required: false
+        default: "script.md"
+
+jobs:
+  analyze_and_optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Run Analytics Feedback
+        env:
+          YOUTUBE_ANALYTICS_API_KEY: ${{ secrets.YOUTUBE_ANALYTICS_API_KEY }}
+          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
+          VIDEO_ID: ${{ github.event.inputs.video_id }}
+          SCRIPT_FILE: ${{ github.event.inputs.script_file }}
+        run: python scripts/analytics_feedback.py
