@@ -3,61 +3,6 @@ name: Produce Video (fully automated)
 # Uçtan uca otomatik: araştırma -> script (+kalite kontrolü) -> başlık
 # -> seslendirme -> altyazı -> sahne görselleri -> kapak -> render ->
 # müzik miksajı -> altyazı gömme -> upload.
-#
-# MİMARİ NOTU (job bölünmesi - maliyet koruması):
-# Bu workflow BİLEREK tek job değil, birden fazla BAĞIMLI job'a
-# bölünmüştür (needs: ile zincirleme). Her job kendi çıktısını
-# actions/upload-artifact ile kaydeder, bir sonraki job bunu
-# actions/download-artifact ile indirip kaldığı yerden devam eder.
-#
-# NEDEN: Tek job'da bir adım patlarsa, GitHub'ın "Re-run" özelliği TÜM
-# job'ı sıfırdan çalıştırır - para/zaman israfı. Job'lar ayrıysa,
-# "Re-run failed jobs" SADECE başarısız olanı (ve sonrakileri) yeniden
-# çalıştırır; önceki başarılı job'ların Artifact'leri OLDUĞU GİBİ
-# kullanılır.
-#
-# HER JOB KENDİ BAĞIMSIZ ORTAMINDA ÇALIŞIR: bu yüzden her job, ihtiyaç
-# duyduğu HER ŞEYİ (pip paketleri, ffmpeg gibi sistem paketleri) kendi
-# içinde ayrı ayrı kurmak ZORUNDADIR - önceki job'da kurulan hiçbir şey
-# sonrakine miras kalmaz. Bu dosyada ffmpeg gerektiren HER job'a
-# (voiceover, align_subtitles, music_mix, scene_images, assemble_video,
-# burn_subtitles) ffmpeg kurulumu ayrı ayrı eklenmiştir.
-#
-# MODEL NOTU: research.py ve generate_script.py Claude (ANTHROPIC_API_KEY)
-# kullanıyor. generate_titles.py ve generate_thumbnail.py Gemini
-# (GEMINI_API_KEY) kullanıyor - kapak üretimi gemini-2.5-flash-image ile
-# (gemini-3-pro-image ücretsiz katmanda kullanılamıyor, kotası sıfır).
-# Sahne görselleri (generate_scenes.py) hâlâ Wiro kullanıyor.
-#
-# Zamanlama SADECE cron-job.org üzerinden yönetiliyor (haftada 3 gün,
-# 11:00 Türkiye saati). GitHub'ın kendi "schedule" tetikleyicisi
-# BİLEREK yok. Video, upload_youtube.py sayesinde YouTube'un kendi
-# zamanlı yayın özelliğiyle 21:00 TR'de otomatik yayına giriyor.
-#
-# NİŞ KONTROLÜ YENİDEN DENEME: research + script + title + niche-check
-# adımları TEK bir döngü içinde, en fazla 5 kez farklı alt-nişle
-# denenir.
-#
-# BUGÜNKÜ KRİTİK DÜZELTME (used_topics.json / used_comments.json):
-# Önceden save_topic_history job'ı bu iki dosyayı "touch" ile
-# (yani BOŞ/olduğu gibi) commit ediyordu - content ve upload_youtube
-# job'larının KENDİ İZOLE ortamlarında yaptığı gerçek güncellemeler
-# hiçbir Artifact'e yüklenmediği için kayboluyordu. Sonuç: niş/konu
-# rotasyonu ve yorum tekrarı önleme mekanizmaları kağıt üstünde doğru
-# görünüyor ama PRATİKTE HİÇ ÇALIŞMIYORDU. Şimdi:
-#   - content job'ı used_topics.json'ı da content-bundle Artifact'ine
-#     ekliyor.
-#   - upload_youtube job'ı used_comments.json'ı ayrı bir Artifact
-#     olarak yüklüyor.
-#   - save_topic_history bu Artifact'leri İNDİRİP commit ediyor,
-#     touch ile üzerine boş dosya yazmıyor.
-#
-# AYNI BUG used_titles.json'DA DA VARDI (sonradan fark edildi): generate_titles.py
-# başlık şablonu tekrarını önlemek için bu dosyayı okuyup güncelliyordu ama
-# content-bundle Artifact'ine dahil değildi ve save_topic_history onu hiç
-# commit etmiyordu - yani her koşu, önceki hiçbir başlığı görmeden SIFIRDAN
-# başlıyordu. Aynı düzeltme (content-bundle'a ekle + save_topic_history'de
-# commit et) buraya da uygulandı.
 
 on:
   workflow_dispatch:
@@ -91,14 +36,13 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         run: pip install -r requirements.txt
-      - name: Pick this run's niche (feeds trend query + research)
+      - name: Pick this run's niche
         id: pick
         env:
           TOPIC_HINT_INPUT: ${{ github.event.inputs.topic_hint }}
         run: |
           if [ -n "$TOPIC_HINT_INPUT" ]; then
             echo "topic_hint=$TOPIC_HINT_INPUT" >> "$GITHUB_OUTPUT"
-            echo "Elle verilen konu ipucu kullanılıyor: $TOPIC_HINT_INPUT"
           else
             PICKED=$(python -c "
           import sys
@@ -108,7 +52,6 @@ jobs:
           print(pick_sub_niche(len(used)))
           ")
             echo "topic_hint=$PICKED" >> "$GITHUB_OUTPUT"
-            echo "Bu koşu için otomatik seçilen niş: $PICKED"
           fi
 
   # ---------------------------------------------------------------
@@ -124,7 +67,7 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         run: pip install -r requirements.txt
-      - name: Trend analysis (what's actually working right now)
+      - name: Trend analysis
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -137,7 +80,7 @@ jobs:
           retention-days: 3
 
   # ---------------------------------------------------------------
-  # 2-4.5) Research + script + title + niche-check
+  # 2-4.5) Research + script + title + QUALITY GATE
   # ---------------------------------------------------------------
   content:
     needs: [pick_niche, trend_analysis]
@@ -152,7 +95,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: trend-json
-      - name: "Research + script + title + niche-check (uyumsuzsa otomatik 5 kez farklı konuyla dener)"
+      - name: "Research + script + title + Quality Gate (max 5 attempts)"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -162,24 +105,29 @@ jobs:
           MAX_ATTEMPTS=5
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
             echo "=== Deneme $attempt/$MAX_ATTEMPTS ==="
-            export RETRY_OFFSET=$((attempt - 1))
-
+            
             python scripts/research.py --out facts.json
             python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
             python scripts/generate_titles.py --script script.md --out titles.json
 
-            if python scripts/niche_check.py --script script.md --titles titles.json; then
-              echo "Niş kontrolü geçti, devam ediliyor."
+            # BÖLÜM 28: KALİTE KAPISI (Para harcamadan önce kontrol)
+            if python scripts/quality_gate.py --script script.md --titles titles.json; then
+              echo "Kalite kapısı geçti, devam ediliyor."
               break
             fi
 
             if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
-              echo "$MAX_ATTEMPTS deneme sonunda hiçbir konu niş kontrolünden geçemedi, iş durduruluyor."
+              echo "5 deneme sonunda kalite kapısından geçemedi, iş durduruluyor."
               exit 1
             fi
-
-            echo "Niş kontrolü başarısız, farklı bir alt-nişle yeniden deneniyor..."
+            echo "Kalite kapısı başarısız, farklı alt-nişle yeniden deneniyor..."
           done
+      
+      - name: Select Visual Style (Bölüm 26)
+        run: |
+          python scripts/visual_style_selector.py --niche "${{ needs.pick_niche.outputs.topic_hint }}" > visual_style.txt
+          cat visual_style.txt
+      
       - uses: actions/upload-artifact@v4
         with:
           name: content-bundle
@@ -187,12 +135,13 @@ jobs:
             facts.json
             script.md
             titles.json
+            visual_style.txt
             used_topics.json
             used_titles.json
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 5) Voiceover (Wiro voice-clone) - ffmpeg gerektirir
+  # 5) Voiceover (Wiro voice-clone)
   # ---------------------------------------------------------------
   voiceover:
     needs: content
@@ -202,14 +151,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (ffmpeg dahil)
+      - name: Install deps
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
           pip install -r requirements.txt
       - uses: actions/download-artifact@v4
         with:
           name: content-bundle
-      - name: Voiceover (Wiro voice-clone)
+      - name: Voiceover (Wiro)
         env:
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
           VOICE_REFERENCE_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/assets/voice/reference.wav
@@ -221,7 +170,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 5b) Kelime zaman damgaları (Whisper) - ffmpeg gerektirir
+  # 5b) Kelime zaman damgaları (Whisper)
   # ---------------------------------------------------------------
   align_subtitles:
     needs: voiceover
@@ -231,7 +180,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (ffmpeg dahil)
+      - name: Install deps
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
           pip install -r requirements.txt
@@ -239,7 +188,7 @@ jobs:
         with:
           name: voiceover-audio
           path: audio
-      - name: Extract word timestamps (Whisper, provider-independent)
+      - name: Extract word timestamps (Whisper)
         run: python scripts/align_subtitles.py --audio audio/voiceover.mp3 --out audio/alignment.json
       - uses: actions/upload-artifact@v4
         with:
@@ -248,7 +197,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 6) Background music mix - ffmpeg gerektirir
+  # 6) Background music mix
   # ---------------------------------------------------------------
   music_mix:
     needs: voiceover
@@ -258,7 +207,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (ffmpeg dahil)
+      - name: Install deps
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
           pip install -r requirements.txt
@@ -266,10 +215,8 @@ jobs:
         with:
           name: voiceover-audio
           path: audio
-      - name: Background music mix (random track from pool)
-        run: |
-          python scripts/mix_audio.py --voice audio/voiceover.mp3 \
-            --music-dir assets/music/ --out audio/final_mix.mp3
+      - name: Background music mix
+        run: python scripts/mix_audio.py --voice audio/voiceover.mp3 --music-dir assets/music/ --out audio/final_mix.mp3
       - uses: actions/upload-artifact@v4
         with:
           name: final-mix-audio
@@ -277,7 +224,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 7) Scene images (Pexels + Wiro) - ffmpeg gerektirebilir (video klipler)
+  # 7) Scene images (Wiro ONLY - Görsel Stil Varyasyonu ile)
   # ---------------------------------------------------------------
   scene_images:
     needs: content
@@ -287,19 +234,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (ffmpeg dahil)
+      - name: Install deps
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
           pip install -r requirements.txt
       - uses: actions/download-artifact@v4
         with:
           name: content-bundle
-      - name: Scene images (Pexels stock + Wiro reve/generate)
+      - name: Scene images (Wiro with Visual Style Variation)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-        run: python scripts/generate_scenes.py --script script.md --out scenes/
+        run: |
+          STYLE_SUFFIX=$(cat visual_style.txt | grep "Prompt Eki:" | cut -d':' -f2-)
+          python scripts/generate_scenes.py --script script.md --style "$STYLE_SUFFIX" --out scenes/
       - uses: actions/upload-artifact@v4
         with:
           name: scenes-dir
@@ -307,7 +255,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 8) Thumbnail (Gemini - gemini-2.5-flash-image)
+  # 8) Thumbnail (Gemini)
   # ---------------------------------------------------------------
   thumbnail:
     needs: [content, trend_analysis]
@@ -328,9 +276,6 @@ jobs:
       - name: Thumbnail (Gemini)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python scripts/generate_thumbnail.py --titles titles.json --out-dir output/thumbnails/
       - uses: actions/upload-artifact@v4
         with:
@@ -339,7 +284,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 9) Assemble video - ffmpeg gerektirir
+  # 9) Assemble video
   # ---------------------------------------------------------------
   assemble_video:
     needs: [content, music_mix, scene_images]
@@ -349,7 +294,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (ffmpeg dahil)
+      - name: Install deps
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu libsndfile1
           pip install -r requirements.txt
@@ -364,7 +309,7 @@ jobs:
         with:
           name: scenes-dir
           path: scenes
-      - name: Assemble video (Ken Burns + 15 transitions + callouts)
+      - name: Assemble video
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/assemble_video.py --audio audio/final_mix.mp3 --scenes scenes/ --script script.md --out output/raw.mp4
@@ -375,7 +320,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 10) Burn subtitles - ffmpeg gerektirir
+  # 10) Burn subtitles
   # ---------------------------------------------------------------
   burn_subtitles:
     needs: [assemble_video, align_subtitles]
@@ -385,7 +330,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (ffmpeg dahil)
+      - name: Install deps
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu libsndfile1
           pip install -r requirements.txt
@@ -397,10 +342,8 @@ jobs:
         with:
           name: alignment-json
           path: audio
-      - name: Burn subtitles (synced from Whisper timestamps)
-        run: |
-          python scripts/subtitles.py --alignment audio/alignment.json \
-            --video output/raw.mp4 --out output/final.mp4
+      - name: Burn subtitles
+        run: python scripts/subtitles.py --alignment audio/alignment.json --video output/raw.mp4 --out output/final.mp4
       - uses: actions/upload-artifact@v4
         with:
           name: final-video
@@ -408,7 +351,7 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------
-  # 11) Upload to YouTube
+  # 11) Upload to YouTube (Bölüm 30: Gizli Yükleme Stratejisi)
   # ---------------------------------------------------------------
   upload_youtube:
     needs: [burn_subtitles, thumbnail, content, align_subtitles]
@@ -435,16 +378,17 @@ jobs:
         with:
           name: thumbnails-dir
           path: output/thumbnails
-      - name: Upload to YouTube (scheduled publish at target hour)
+      - name: Upload to YouTube (Private first, schedule publish)
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
         run: |
           python scripts/upload_youtube.py --video output/final.mp4 \
             --titles titles.json --thumbnail output/thumbnails/thumbnail_1.png \
-            --script script.md --facts facts.json --alignment audio/alignment.json
+            --script script.md --facts facts.json --alignment audio/alignment.json \
+            --status "private" --schedule-delay-hours 3
       - uses: actions/upload-artifact@v4
         with:
           name: used-comments-json
@@ -470,12 +414,11 @@ jobs:
         with:
           name: scenes-dir
           path: assets/scene_library
-      - name: Save topic history and scene library (prevent future repeats, reuse images)
+      - name: Save topic history and scene library
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p assets/scene_library
-          # Sadece VAR OLAN dosyaları ekle - eksik bir dosya tüm adımı düşürmesin
           for f in used_topics.json used_comments.json used_titles.json; do
             [ -f "$f" ] && git add "$f"
           done
@@ -484,26 +427,8 @@ jobs:
             echo "Değişiklik yok, commit gerekmiyor."
             exit 0
           fi
-          git commit -m "Update used topics history and scene image library"
-          # main, uzun koşu sırasında ilerlemiş olabilir. Geçici bir push
-          # çakışması TÜM adımı düşürmesin diye fetch+rebase ile birkaç kez dene.
-          pushed=0
-          for i in 1 2 3 4 5; do
-            git fetch origin main || true
-            if git rebase origin/main; then
-              if git push origin HEAD:main; then
-                echo "Geçmiş push edildi (deneme $i)."
-                pushed=1
-                break
-              fi
-            else
-              git rebase --abort 2>/dev/null || true
-            fi
-            echo "Push çakışması, yeniden deneniyor ($i/5)..."
-            sleep $(( (RANDOM % 5) + 3 ))
-          done
-          if [ "$pushed" -ne 1 ]; then
-            echo "UYARI: gecmis bu kosuda push edilemedi (main mesgul). Video zaten"
-            echo "yuklendi; tekrar-engeli gecmisi bir sonraki basarili kosuda guncellenir."
-          fi
+          git commit -m "chore: update used topics history and scene image library [skip ci]"
+          git fetch origin main || true
+          git rebase origin/main || git rebase --abort
+          git push origin HEAD:main || echo "Push çakışması, bir sonraki run'da çözülecek."
           exit 0
