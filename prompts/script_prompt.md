@@ -26,9 +26,4 @@ Kurallar:
 - SAYILAR: Tüm sayıları rakamla değil YAZIYLA yaz ("ninety", "nineteen ninety-four").
 - KISALTMALAR: İlk geçtiği yerde MUTLAKA açık haliyle birlikte ver.
 
-GÖRSEL STİL PARAMETRESİ (KRİTİK):
-Bu video için seçilen görsel stil: {VISUAL_STYLE_SUFFIX}
-Lütfen oluşturduğun her sahne görsel prompt'unun (İngilizce) en sonuna, virgül ile ayırarak bu stil suffix'ini EKLE. 
-Örnek: "a dark server room, cinematic lighting, 35mm film grain, documentary style"
-
 SADECE final script metnini yaz, başlık/açıklama ekleme, meta yorum ekleme. UNUTMA: script %100 İngilizce olacak.
