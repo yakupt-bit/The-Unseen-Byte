@@ -5,6 +5,13 @@ name: Produce Video (fully automated)
 # müzik miksajı -> altyazı gömme -> upload.
 
 on:
+  # -------------------------------------------------------------------
+  # OTOMATİK ÇALIŞTIRMA (haftada 2 kez: Pazartesi & Perşembe 09:00 UTC = 12:00 TR)
+  # ŞU AN KAPALI. İlk test (test_mode) BAŞARILI olduktan SONRA aşağıdaki
+  # "schedule:" ve "- cron:" satırlarının başındaki "# " işaretlerini
+  # kaldırarak otomatiği aç. Test etmeden otomatiğe güvenme.
+  # schedule:
+  #   - cron: "0 9 * * 1,4"
   workflow_dispatch:
     inputs:
       topic_hint:
@@ -12,7 +19,7 @@ on:
         required: false
         default: ""
       test_mode:
-        description: "Hızlı test modu (çok kısa ~1 dk video, hızlı iterasyon için)"
+        description: "Hızlı test modu (~1 dk kısa video, YouTube'a YÜKLEMEZ)"
         required: false
         type: boolean
         default: false
@@ -80,7 +87,7 @@ jobs:
           retention-days: 3
 
   # ---------------------------------------------------------------
-  # 2-4.5) Research + script + title + QUALITY GATE
+  # 2-4.5) Research + script + title + KALİTE + NİŞ/TEKRAR KAPISI
   # ---------------------------------------------------------------
   content:
     needs: [pick_niche, trend_analysis]
@@ -95,7 +102,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: trend-json
-      - name: "Research + script + title + Quality Gate (max 5 attempts)"
+      - name: "Research + script + title + Quality/Niche Gate (max 5 attempts)"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -105,29 +112,48 @@ jobs:
           MAX_ATTEMPTS=5
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
             echo "=== Deneme $attempt/$MAX_ATTEMPTS ==="
-            
+
+            # 2. denemeden itibaren farklı bir alt-niş dene (aynı reddedilen
+            # konuya tekrar takılmamak için): TOPIC_HINT'i bırak, research.py
+            # RETRY_OFFSET ile güvenli alt-nişlerden seçsin.
+            if [ "$attempt" -gt 1 ]; then
+              unset TOPIC_HINT
+              export RETRY_OFFSET=$((attempt-1))
+            fi
+
             python scripts/research.py --out facts.json
             python scripts/generate_script.py --facts facts.json --trends trend.json --out script.md $TEST_FLAG
             python scripts/generate_titles.py --script script.md --out titles.json
 
-            # BÖLÜM 28: KALİTE KAPISI (Para harcamadan önce kontrol)
-            if python scripts/quality_gate.py --script script.md --titles titles.json; then
-              echo "Kalite kapısı geçti, devam ediliyor."
+            # TEST MODU: kısa script üretilir; ağır kapılar (uzunluk/niş/tekrar)
+            # atlanır - amaç sadece zincirin uçtan uca döndüğünü görmek.
+            if [ -n "$TEST_FLAG" ]; then
+              python scripts/quality_gate.py --script script.md --titles titles.json --test || true
+              echo "Test modu: kapılar atlandı, devam."
+              break
+            fi
+
+            # BÖLÜM 28 KALİTE KAPISI + BÖLÜM 12/13 NİŞ & TEKRAR KAPISI.
+            # niche_check.py used_topics.json'ı GEÇTİKTEN SONRA günceller
+            # (tekrar önleme hafızası artık gerçekten büyür).
+            if python scripts/quality_gate.py --script script.md --titles titles.json \
+               && python scripts/niche_check.py --script script.md --titles titles.json --facts facts.json; then
+              echo "Tüm kapılar geçti, devam ediliyor."
               break
             fi
 
             if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
-              echo "5 deneme sonunda kalite kapısından geçemedi, iş durduruluyor."
+              echo "5 deneme sonunda kapılardan geçemedi, iş durduruluyor."
               exit 1
             fi
-            echo "Kalite kapısı başarısız, farklı alt-nişle yeniden deneniyor..."
+            echo "Kapı başarısız, farklı alt-nişle yeniden deneniyor..."
           done
-      
+
       - name: Select Visual Style (Bölüm 26)
         run: |
           python scripts/visual_style_selector.py --niche "${{ needs.pick_niche.outputs.topic_hint }}" > visual_style.txt
           cat visual_style.txt
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: content-bundle
@@ -224,7 +250,7 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------
-  # 7) Scene images (Wiro ONLY - Görsel Stil Varyasyonu ile)
+  # 7) Scene images (Pexels stok video)
   # ---------------------------------------------------------------
   scene_images:
     needs: content
@@ -241,13 +267,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: content-bundle
-      - name: Scene images (Wiro with Visual Style Variation)
+      - name: Scene images (Pexels stock video)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          WIRO_API_KEY: ${{ secrets.WIRO_API_KEY }}
-        run: |
-          STYLE_SUFFIX=$(cat visual_style.txt | grep "Prompt Eki:" | cut -d':' -f2-)
-          python scripts/generate_scenes.py --script script.md --style "$STYLE_SUFFIX" --out scenes/
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: python scripts/generate_scenes.py --script script.md --out scenes/
       - uses: actions/upload-artifact@v4
         with:
           name: scenes-dir
@@ -351,11 +375,12 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------
-  # 11) Upload to YouTube (Bölüm 30: Gizli Yükleme Stratejisi)
+  # 11) Upload to YouTube (Bölüm 30) - TEST MODUNDA ATLANIR
   # ---------------------------------------------------------------
   upload_youtube:
     needs: [burn_subtitles, thumbnail, content, align_subtitles]
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_mode != 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -387,8 +412,7 @@ jobs:
         run: |
           python scripts/upload_youtube.py --video output/final.mp4 \
             --titles titles.json --thumbnail output/thumbnails/thumbnail_1.png \
-            --script script.md --facts facts.json --alignment audio/alignment.json \
-            --status "private" --schedule-delay-hours 3
+            --script script.md --facts facts.json --alignment audio/alignment.json
       - uses: actions/upload-artifact@v4
         with:
           name: used-comments-json
