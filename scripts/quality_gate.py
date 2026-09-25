@@ -91,7 +91,8 @@ def main():
     all_ok = True
     for ok, msg in (check_script_length(script_text),
                     check_first_30_seconds(script_text)):
-        print(f"{'\u2705' if ok else '\u274c'} {msg}")
+        mark = "\u2705" if ok else "\u274c"
+        print(f"{mark} {msg}")
         if not ok:
             all_ok = False
 

@@ -194,7 +194,9 @@ def call_gemini(client, contents, max_tokens=600):
             response = client.models.generate_content(
                 model=MODEL_TEXT_VISION,
                 contents=contents,
-                config=types.GenerateContentConfig(max_output_tokens=max_tokens),
+                # dusunen model: dusunme tokenlari da bu limitten yiyor, 80-600'de
+                # cevap yarida kesiliyordu -> bol pay
+                config=types.GenerateContentConfig(max_output_tokens=max(max_tokens * 6, 8192)),
             )
             return response.text or ""
         except Exception as e:

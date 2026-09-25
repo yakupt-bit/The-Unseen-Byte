@@ -209,7 +209,7 @@ def main():
     for attempt in range(1, 4):
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,  # web araması ek content bloğu ürettiği için yükseltildi
+            max_tokens=8000,  # 4000'de JSON yarida kesiliyordu (parse hatalari)
             tools=WEB_SEARCH_TOOL,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -217,7 +217,13 @@ def main():
         cleaned = raw_text.replace("```json", "").replace("```", "").strip()
         last_cleaned = cleaned
         try:
-            data = json.loads(cleaned)
+            # Model JSON'dan once "Tum verileri dogruladim..." gibi aciklama
+            # yaziyordu -> duz json.loads hep patliyordu. Ilk '{' ile son '}'
+            # arasini al.
+            start, end = cleaned.find("{"), cleaned.rfind("}")
+            if start == -1 or end <= start:
+                raise json.JSONDecodeError("JSON yok", cleaned, 0)
+            data = json.loads(cleaned[start:end + 1])
             break
         except json.JSONDecodeError:
             if attempt < 3:

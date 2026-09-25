@@ -50,6 +50,7 @@ from google.genai import types
 MODEL_CREATIVE = "gemini-3.6-flash"
 MODEL_UTILITY = "gemini-3.1-flash-lite"
 BRAND_SUFFIX = " | The Unseen Byte"
+CLAUDE_FALLBACK_MODEL = "claude-sonnet-4-6"  # repo'daki diger scriptlerle ayni
 
 # generate_thumbnail.py'deki FALLBACK_CONCEPTS ile AYNI mantık: parse
 # hatasında TEK bir sabit string'e düşülürse, art arda başarısız olan
@@ -139,16 +140,32 @@ def format_used_titles_block(used_titles: list) -> str:
     )
 
 
+def call_claude_fallback(prompt, max_tokens=1500):
+    """Gemini cokerse (503 yogunluk, 429 ucretsiz kota) Claude ile ayni
+    istegi atar - eskiden bu durumda is tamamen duruyor ya da anlamsiz bir
+    jenerik yedek basliga ('Why This Still Doesn't Add Up') dusuluyordu."""
+    import anthropic
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    msg = client.messages.create(
+        model=CLAUDE_FALLBACK_MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return "".join(b.text for b in msg.content if b.type == "text")
+
+
 def call_gemini(client, prompt, model, max_tokens=800):
     """Gemini'ye istek atar; geçici hatalarda üstel bekleme ile
-    otomatik olarak yeniden dener."""
+    otomatik olarak yeniden dener. Hepsi basarisiz olursa Claude'a duser."""
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
+            # Gemini "dusunen" model: dusunme tokenlari da max_output_tokens'tan
+            # yiyor. 1200'de cevap yarida kesilip parse edilemiyordu -> bol pay.
             response = client.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(max_output_tokens=max_tokens),
+                config=types.GenerateContentConfig(max_output_tokens=max(max_tokens * 6, 8192)),
             )
             return response.text or ""
         except Exception as e:
@@ -159,6 +176,10 @@ def call_gemini(client, prompt, model, max_tokens=800):
                       f"{delay}sn sonra tekrar deneniyor "
                       f"(deneme {attempt + 1}/{MAX_RETRIES})...")
                 time.sleep(delay)
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        print(f"  UYARI: Gemini {MAX_RETRIES} denemede de basarisiz ({type(last_error).__name__}), "
+              f"Claude'a geciliyor.")
+        return call_claude_fallback(prompt, max_tokens=max(max_tokens, 1500))
     raise last_error
 
 
@@ -215,7 +236,11 @@ def generate_title_candidates(client, prompt):
     FALLBACK_TITLES'tan rastgele biri kullanılır."""
     last_raw = ""
     for attempt in range(1, MAX_TITLE_PARSE_ATTEMPTS + 1):
-        raw = call_gemini(client, prompt, MODEL_CREATIVE, max_tokens=1200)
+        if attempt == MAX_TITLE_PARSE_ATTEMPTS and os.environ.get("ANTHROPIC_API_KEY"):
+            # son deneme Claude ile: jenerik yedek basliga dusmekten iyidir
+            raw = call_claude_fallback(prompt, max_tokens=1500)
+        else:
+            raw = call_gemini(client, prompt, MODEL_CREATIVE, max_tokens=1200)
         last_raw = raw
         try:
             candidates = extract_json_array(raw)
