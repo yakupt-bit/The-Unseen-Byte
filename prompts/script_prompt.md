@@ -23,6 +23,10 @@ Kurallar:
 - Sonunda SAMİMİ VE İKNA EDİCİ ama agresif olmayan bir kapanış/abone çağrısı olsun.
 - Hiçbir güncel olaya, tarihe veya turnuvaya referans verme (evergreen olmalı).
 - KRİTİK - PERİYODİK ÖDÜL MEKANİZMASI: videonun GERİ KALANI boyunca YAKLAŞIK HER 2-2.5 DAKİKADA BİR izleyiciye küçük, somut, kendi içinde tatmin edici bir "mini-reveal" ver.
+- KRİTİK - "AMA" KÖPRÜLERİ (South Park "but/therefore" tekniği): Script'i bölümlere ayırdığın her yerde, bölümün son 1-2 cümlesi o bölümü kapatıp hemen yeni bir soru/engel açmalı ("But here's the problem almost nobody saw coming...", "And that's exactly when it broke."). Hiçbir bölüm tamamen çözülmüş ve rahatlamış bir cümleyle bitmesin.
+- KRİTİK - VAAT: İlk 20 saniye, başlığın/kapağın vaat ettiği ana soruyu açıkça tekrarlamalı; izleyici "doğru videodayım" demeli. Cevap finalde verilir.
+- KRİTİK - KAYNAK SADAKATİ: Somut her iddia (tarih, sayı, isim, satış rakamı, alıntı) YALNIZCA araştırma bulgularındaki bir "claim"e dayanmalı. Bulgularda olmayan bir rakam/tarih/alıntı UYDURMA; emin değilsen genel ifade kullan ("millions of units", "in the late nineties"). Yanlış bilgi hem yorumlarda güveni hem de kanalı yanıltıcı içerik riskine sokar.
+- ZİNCİR: Kapanışta izleyiciye yeni bir soru bırak ve onu kanaldaki başka bir teknoloji hikâyesine yönlendir (uydurma başlık verme, genel kal).
 - SAYILAR: Tüm sayıları rakamla değil YAZIYLA yaz ("ninety", "nineteen ninety-four").
 - KISALTMALAR: İlk geçtiği yerde MUTLAKA açık haliyle birlikte ver.
 

@@ -52,5 +52,13 @@ daha çok "bu konuyu gerçekten bilen, ciddiye alınası bir anlatıcı"
 hissi - belgesel sunucusu gibi, net, kendinden emin, ama hâlâ insani.
 Argo yok.
 
+**Konu genişliği kuralı (kanal verisiyle doğrulandı):** Belirsiz/soyut
+başlıklar 0-5 izlenme aldı, somut ve tanıdık konular (belirli bir konsol,
+belirli bir oyun) 82-143 izlenme aldı. Konu hem SOMUT (tanıdık bir ürün/
+oyun/şirket adı) hem de GENİŞ kitleyi ilgilendiren bir merak olmalı:
+"Why the Xbox 360 kept dying" çalışır; "Thermal dissipation failure modes
+in 2005-era GPUs" çalışmaz. Dar/teknik açı, somut bir hikâyenin İÇİNDE
+anlatılır, başlığın kendisi olmaz.
+
 **Kaçınılacaklar:** Tıklama tuzağı yalanlar, kaynaksız iddialar, aşırı
 sansasyonel dil (bu güveni kırar, uzun vadede büyümeyi yavaşlatır).
